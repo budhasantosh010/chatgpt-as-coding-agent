@@ -164,11 +164,19 @@ capability.
 **Add a cross-cutting policy** (approvals, rate limits, extra redaction): register
 a pre/post hook in `hooks.py`. It runs around every tool call — no wrapper edits.
 
-**Done:** per-session isolation, checkpoints/rollback, background processes,
-worktree-per-task, memory, skills, todos, atomic multi-file patch, lifecycle
-hooks, secret-content scrubbing, optional Docker sandbox, stdio transport.
-**Roadmap** (each has a home with zero rework): ASK/approval mode, more sandbox
-backends (gVisor/Firecracker), an audit-query tool.
+**Done:** checkpoints/rollback (with auto-checkpoint before edits + stale-write
+guard), background processes (per-owner), worktree-per-task, memory, skills,
+todos, batch multi-file patch (in-process rollback), lifecycle hooks,
+secret-content scrubbing on every return path, env allowlist, unified execution
+boundary (git hooks/filters neutralized), optional Docker sandbox, stdio transport.
+
+**Known gap:** over the stateless HTTP transport all ChatGPT conversations share
+one session — concurrent conversations are not isolated yet. Use one at a time.
+Fixed by the explicit `task_id` handle in the Codex-task phase.
+
+**Roadmap:** explicit task identity + task lifecycle (Codex-style), full
+permission modes + approvals, hardened per-project container sandbox, LSP/
+diagnostics, MCP client federation, image/notebook support.
 
 ## Development
 

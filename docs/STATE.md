@@ -39,10 +39,23 @@ HarnessContext; each MCP tool is one thin wrapper declaring a capability. Adding
 a tool = one function + one wrapper. Adding a permission mode = edit policy.py
 only. Nothing else changes.
 
-## Status: 29 tools, 87 tests, verified end-to-end (HTTP + stdio)
+## Status: 29 tools, 100+ tests, verified end-to-end (HTTP + stdio)
 
-**Done — Tier 0 (foundations):** per-session isolation (HarnessServer +
-SessionStore; concurrent ChatGPT conversations no longer corrupt each other).
+**KNOWN GAP (being fixed in Phase 1):** over the real stateless HTTP transport the
+MCP SDK issues no session id, so all ChatGPT conversations currently share one
+`"default"` context — concurrent conversations are NOT isolated yet. Use one
+conversation at a time until the explicit `task_id` handle lands. Pinned by
+`tests/test_isolation.py` (xfail-strict).
+
+**Done — Tier 0 (foundations):** a per-session context registry (HarnessServer +
+SessionStore). NOTE: isolation is real only when sessions have distinct keys;
+the transport doesn't yet supply them (see KNOWN GAP above).
+
+**Done — P0 hardening (security/correctness):** error-path scrubbing, run_command
+env allowlist, grep secret-path policy, `.env`/`.git` blocking, capability
+reclassification (read_only is truly read-only), unified execution boundary with
+git hooks/filters neutralized, stale-write guard + auto-checkpoint, atomic state
+writes, memory-id + worktree-collision fixes, per-owner process ownership.
 
 **Done — Tier 1 (parity with Claude Code / Codex):**
 - memory: remember / recall / forget (per-workspace, auto-surfaced on open)

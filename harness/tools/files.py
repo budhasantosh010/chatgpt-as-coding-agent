@@ -124,8 +124,13 @@ async def edit_file(
 
 
 async def apply_edits(hc: HarnessContext, edits: list) -> str:
-    """Apply many file operations atomically: validate all, snapshot all, apply
-    all, and roll everything back if any step fails.
+    """Apply many file operations as a batch with in-process rollback: validate
+    all, snapshot all, apply all, and restore the snapshots if any step raises.
+
+    Not a filesystem transaction — a hard crash (power loss, kill -9) can still
+    leave partial state, and directory/permission/symlink metadata is not
+    restored. It protects against the common case: an ordinary error partway
+    through a multi-file change.
 
     Each edit is an object with a 'path' plus one of:
       * content: str                         -> create/overwrite the file

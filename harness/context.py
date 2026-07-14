@@ -60,6 +60,11 @@ class HarnessContext:
                 f"Workspace {candidate} is outside the approved roots. "
                 f"Add it to HARNESS_WORKSPACE_ROOTS. Allowed: {allowed}"
             )
+        # Flag a workspace switch so open_workspace can warn. Until task_id
+        # isolation lands (Phase 1), concurrent conversations share this context,
+        # so a switch to a *different* workspace may be another chat colliding.
+        prev = self.active_workspace
+        self._switched_from = prev if (prev is not None and prev != candidate) else None
         self.active_workspace = candidate
         self.cwd = candidate
         self.session = Session(self.config.state_dir, candidate)

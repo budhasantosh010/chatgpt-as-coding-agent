@@ -11,8 +11,7 @@ import shutil
 from pathlib import Path
 
 from ..context import HarnessContext
-from ..proc import run_subprocess
-from . import memory, todos
+from . import gitcmd, memory, todos
 
 _PROJECT_MARKERS: list[tuple[str, str]] = [
     ("package.json", "node"),
@@ -59,10 +58,10 @@ def _suggested_commands(ws: Path) -> list[str]:
     return out
 
 
-async def _git(workspace: Path, *args: str) -> str | None:
+async def _git(hc: HarnessContext, workspace: Path, *args: str) -> str | None:
     if shutil.which("git") is None:
         return None
-    result = await run_subprocess(["git", "-C", str(workspace), *args], timeout=15)
+    result = await gitcmd.git(hc, workspace, *args, timeout=15)
     if result.timed_out or result.returncode != 0:
         return None
     return result.stdout.strip()
@@ -74,11 +73,21 @@ async def open_workspace(hc: HarnessContext, path: str) -> str:
 
     lines: list[str] = [f"# Workspace opened: {ws}", ""]
 
-    is_git = await _git(ws, "rev-parse", "--is-inside-work-tree")
+    switched_from = getattr(hc, "_switched_from", None)
+    if switched_from is not None:
+        lines += [
+            f"> ⚠️ This session already had `{switched_from}` open; now switched to "
+            f"this one. If you're running more than one ChatGPT conversation against "
+            f"this harness, they currently share state — use one at a time until "
+            f"per-task isolation lands.",
+            "",
+        ]
+
+    is_git = await _git(hc, ws, "rev-parse", "--is-inside-work-tree")
     if is_git == "true":
-        branch = await _git(ws, "rev-parse", "--abbrev-ref", "HEAD") or "?"
-        status = await _git(ws, "status", "--short")
-        log = await _git(ws, "log", "-5", "--oneline")
+        branch = await _git(hc, ws, "rev-parse", "--abbrev-ref", "HEAD") or "?"
+        status = await _git(hc, ws, "status", "--short")
+        log = await _git(hc, ws, "log", "-5", "--oneline")
         lines.append(f"**Git branch:** {branch}")
         if status:
             lines += ["**Uncommitted changes:**", "```", status, "```"]
@@ -129,10 +138,10 @@ async def session_status(hc: HarnessContext) -> str:
 
     lines = [f"# Session status for {ws}", ""]
 
-    status = await _git(ws, "status", "--short")
+    status = await _git(hc, ws, "status", "--short")
     if status is not None:
         lines += ["**Current git changes:**", "```", status or "(clean)", "```"]
-        diffstat = await _git(ws, "diff", "--stat")
+        diffstat = await _git(hc, ws, "diff", "--stat")
         if diffstat:
             lines += ["```", diffstat, "```"]
         lines.append("")
