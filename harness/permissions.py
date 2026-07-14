@@ -28,6 +28,10 @@ class Action(str, Enum):
     GIT_REMOTE_WRITE = "git_remote_write"
     DATABASE_MUTATION = "database_mutation"
     DEPLOYMENT = "deployment"
+    # Federated MCP servers: listing them is a read; CALLING one can do anything
+    # (browser control, DBs, messages), so it never auto-runs below full.
+    EXTERNAL_READ = "external_read"
+    EXTERNAL_CALL = "external_call"
 
 
 # Command patterns → action class (first match wins). High-signal only.
@@ -61,19 +65,24 @@ def action_for(capability: Capability, command: str | None = None) -> Action:
 
 
 # Actions that automatically run in auto_workspace (everything else there ASKs).
+# EXTERNAL_CALL is deliberately NOT here: an external MCP tool can do anything,
+# so it always asks below full.
 _AUTO_WORKSPACE_ALLOW = {
     Action.FILE_READ, Action.FILE_WRITE, Action.FILE_DELETE,
     Action.COMMAND_SAFE, Action.COMMAND_ARBITRARY, Action.GIT_LOCAL_WRITE,
+    Action.EXTERNAL_READ,
 }
+
+_READS = {Action.FILE_READ, Action.EXTERNAL_READ}
 
 
 def decide(mode: str, action: Action) -> Decision:
     if mode in ("full", "bypass_sandboxed"):
         return Decision.ALLOW
     if mode in ("read_only", "plan"):
-        return Decision.ALLOW if action is Action.FILE_READ else Decision.DENY
+        return Decision.ALLOW if action in _READS else Decision.DENY
     if mode == "build_ask":
-        return Decision.ALLOW if action is Action.FILE_READ else Decision.ASK
+        return Decision.ALLOW if action in _READS else Decision.ASK
     if mode == "auto_workspace":
         return Decision.ALLOW if action in _AUTO_WORKSPACE_ALLOW else Decision.ASK
     return Decision.DENY  # unknown mode: fail closed

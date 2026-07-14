@@ -14,7 +14,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from .config import Config
 from .context import HarnessContext, HarnessServer
 from .hooks import ToolCall
-from .permissions import action_for, decide as decide_action
+from .permissions import Action, action_for, decide as decide_action
 from .policy import Capability, Decision
 from .scrub import scrub_text
 from .security import SecurityError
@@ -33,6 +33,10 @@ _TOOL_CAPS: dict[str, Capability] = {
     "remember": Capability.WRITE,
     "forget": Capability.WRITE,
     "write_todos": Capability.WRITE,
+    # diagnostics_check EXECUTES the project's checker (tsc/eslint/cargo…), and
+    # some checkers run project-controlled code (cargo build scripts). Plan mode
+    # must not execute — it's an EXECUTE tool, not a read.
+    "diagnostics_check": Capability.EXECUTE,
 }
 
 
@@ -106,12 +110,16 @@ def _finalize(hc: HarnessContext, text: str) -> str:
     return text
 
 
-def _gate(hc: HarnessContext, capability: Capability, tool: str, command: str | None) -> str | None:
+def _gate(hc: HarnessContext, capability: Capability | None, tool: str, command: str | None,
+          action=None) -> str | None:
     """Decide whether a call proceeds under the active permission mode, refining
     EXECUTE by classifying the command (auto_workspace lets local commands run
     but asks for network/remote/deploy). Returns None to proceed, or an
-    approval-required message string to return to the caller. Raises on DENY."""
-    action = action_for(capability, command)
+    approval-required message string to return to the caller. Raises on DENY.
+    Pass `action` explicitly for tools whose risk isn't captured by capability +
+    command classification (e.g. federation's EXTERNAL_CALL)."""
+    if action is None:
+        action = action_for(capability, command)
     decision = decide_action(hc.policy.mode, action)
     if decision is Decision.ALLOW:
         return None
@@ -156,7 +164,16 @@ async def _call(hc: HarnessContext, capability: Capability | None, fn, *args) ->
     hooks = getattr(hc, "hooks", None)
     try:
         if capability is not None:
-            command = args[0] if (capability is Capability.EXECUTE and args and isinstance(args[0], str)) else None
+            # Only shell tools carry a classifiable command in args[0]; other
+            # EXECUTE tools (diagnostics, process control) must not have a path
+            # or process id misread as a command.
+            command = (
+                args[0]
+                if (capability is Capability.EXECUTE
+                    and fn.__name__ in ("run_command", "start_process")
+                    and args and isinstance(args[0], str))
+                else None
+            )
             gate = _gate(hc, capability, fn.__name__, command)
             if gate is not None:
                 return _finalize(hc, gate)
@@ -358,9 +375,10 @@ def build_mcp(config: Config, server: HarnessServer) -> FastMCP:
     @mcp.tool()
     async def diagnostics_check(path: str | None = None, task_id: str | None = None, ctx: Context = None) -> str:
         """Run the project's detected linter/typechecker (ruff/tsc/eslint/cargo/
-        go vet) and return errors. Call after edits to stop editing blind."""
+        go vet) and return errors. Call after edits to stop editing blind. This
+        EXECUTES the checker, so it is unavailable in plan/read_only modes."""
         hc = server.context_for(task_id, _session_key(ctx))
-        return await _call(hc, Capability.READ, diagnostics.diagnostics, path)
+        return await _call(hc, capability_for("diagnostics_check"), diagnostics.diagnostics, path)
 
     @mcp.tool()
     async def repo_map(path: str | None = None, task_id: str | None = None, ctx: Context = None) -> str:
@@ -587,10 +605,24 @@ def build_mcp(config: Config, server: HarnessServer) -> FastMCP:
         return _task_call(tasktools.register_project, path, name)
 
     # ---- federation (consume other MCP servers) ----------------------------
+    # Federated tools go through the same permission gate as everything else.
+    # Listing servers/tools is EXTERNAL_READ; CALLING one is EXTERNAL_CALL,
+    # which can do anything (browser, DBs, messages) and so never auto-runs
+    # below full — auto_workspace/build_ask ask the operator first.
+
+    def _federation_gate(hc, tool_name: str, detail: str, action) -> str | None:
+        return _gate(hc, None, tool_name, detail, action=action)
 
     @mcp.tool()
-    async def mcp_servers(ctx: Context = None) -> str:
+    async def mcp_servers(task_id: str | None = None, ctx: Context = None) -> str:
         """List configured external MCP servers you can federate with."""
+        try:
+            hc = server.context_for(task_id, _session_key(ctx))
+            gate = _federation_gate(hc, "mcp_servers", "", Action.EXTERNAL_READ)
+            if gate is not None:
+                return _finalize(hc, gate)
+        except _EXPECTED_ERRORS as exc:
+            return _scrub_server(server, f"Error: {exc}")
         names = server.federation.names()
         if not names:
             return ("No external MCP servers configured. Add them via "
@@ -598,9 +630,13 @@ def build_mcp(config: Config, server: HarnessServer) -> FastMCP:
         return "# Federated MCP servers\n" + "\n".join(f"  - {n}" for n in names)
 
     @mcp.tool()
-    async def mcp_tools(server_name: str, ctx: Context = None) -> str:
+    async def mcp_tools(server_name: str, task_id: str | None = None, ctx: Context = None) -> str:
         """List the tools an external MCP server exposes."""
         try:
+            hc = server.context_for(task_id, _session_key(ctx))
+            gate = _federation_gate(hc, "mcp_tools", server_name, Action.EXTERNAL_READ)
+            if gate is not None:
+                return _finalize(hc, gate)
             tools = await server.federation.list_tools(server_name)
         except _EXPECTED_ERRORS as exc:
             return _scrub_server(server, f"Error: {exc}")
@@ -610,9 +646,22 @@ def build_mcp(config: Config, server: HarnessServer) -> FastMCP:
         return _scrub_server(server, f"# Tools on {server_name}\n{body}")
 
     @mcp.tool()
-    async def mcp_call(server_name: str, tool: str, arguments: dict | None = None, ctx: Context = None) -> str:
-        """Call a tool on an external MCP server and return its output."""
+    async def mcp_call(server_name: str, tool: str, arguments: dict | None = None,
+                       task_id: str | None = None, ctx: Context = None) -> str:
+        """Call a tool on an external MCP server and return its output. Requires
+        a task_id (external calls are tracked and approval-gated per task)."""
+        import json as _json
         try:
+            if not task_id:
+                raise SecurityError(
+                    "mcp_call requires a task_id — start_task first so external "
+                    "calls are tracked and can be approved."
+                )
+            hc = server.context_for(task_id, _session_key(ctx))
+            detail = f"{server_name}.{tool}({_json.dumps(arguments or {}, sort_keys=True)})"
+            gate = _federation_gate(hc, "mcp_call", detail, Action.EXTERNAL_CALL)
+            if gate is not None:
+                return _finalize(hc, gate)
             out = await server.federation.call_tool(server_name, tool, arguments or {})
         except _EXPECTED_ERRORS as exc:
             return _scrub_server(server, f"Error: {exc}")
