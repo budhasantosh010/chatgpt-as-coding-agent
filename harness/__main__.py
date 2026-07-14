@@ -72,6 +72,31 @@ def _cmd_url(config: Config) -> int:
     return 0
 
 
+def _cmd_approvals(config: Config, action: str, approval_id: str | None) -> int:
+    """Operator-only approval queue for build_ask / auto_workspace modes.
+    ChatGPT can *request* an action; only this local CLI can grant it."""
+    from .tasks.store import TaskStore
+
+    store = TaskStore(config.state_dir / "tasks.db")
+    if action == "list":
+        pending = store.pending_approvals()
+        if not pending:
+            print("No pending approvals.")
+            return 0
+        print("Pending approvals:")
+        for a in pending:
+            print(f"  {a['id']}  task={a['task_id']}  [{a['action']}]  {a['detail']}")
+        print("\nApprove with: python -m harness approvals approve <id>")
+        return 0
+    if not approval_id:
+        print(f"Usage: python -m harness approvals {action} <approval_id>")
+        return 2
+    status = "approved" if action == "approve" else "denied"
+    ok = store.decide_approval(approval_id, status)
+    print(f"{status.capitalize()} {approval_id}." if ok else f"{approval_id}: not found or already decided.")
+    return 0 if ok else 1
+
+
 def _cmd_doctor(config: Config) -> int:
     print("== chatgpt-code-harness doctor ==\n")
     print("Config:")
@@ -118,6 +143,9 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("stdio", help="run the MCP server over stdio (for local MCP clients)")
     sub.add_parser("doctor", help="validate config and environment")
     sub.add_parser("url", help="print the MCP endpoint URLs")
+    ap = sub.add_parser("approvals", help="operator approval queue (list/approve/deny)")
+    ap.add_argument("action", nargs="?", choices=["list", "approve", "deny"], default="list")
+    ap.add_argument("approval_id", nargs="?", default=None)
     args = parser.parse_args(argv)
 
     config = Config.from_env()
@@ -130,6 +158,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_url(config)
     if command == "doctor":
         return _cmd_doctor(config)
+    if command == "approvals":
+        return _cmd_approvals(config, args.action, args.approval_id)
     parser.print_help()
     return 2
 

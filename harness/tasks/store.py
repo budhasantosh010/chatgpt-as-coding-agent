@@ -180,6 +180,21 @@ class TaskStore:
             self._db.commit()
             return cur.rowcount > 0
 
+    def grantable_approval(self, task_id: str, action: str) -> dict | None:
+        """An approved-but-unused approval matching this task+action (one-shot)."""
+        with self._lock:
+            r = self._db.execute(
+                "SELECT * FROM approvals WHERE task_id=? AND action=? AND status='approved' "
+                "ORDER BY created LIMIT 1",
+                (task_id, action),
+            ).fetchone()
+            return dict(r) if r else None
+
+    def consume_approval(self, approval_id: str) -> None:
+        with self._lock:
+            self._db.execute("UPDATE approvals SET status='used' WHERE id=?", (approval_id,))
+            self._db.commit()
+
     def pending_approvals(self, task_id: str | None = None) -> list[dict]:
         with self._lock:
             if task_id:

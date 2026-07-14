@@ -35,7 +35,7 @@ class HarnessContext:
     session so concurrent conversations never corrupt each other."""
 
     def __init__(self, config: Config, key: str = "default", processes=None,
-                 executor=None, hooks=None):
+                 executor=None, hooks=None, store=None):
         self.config = config
         self.key = key
         self.task_id: str | None = None
@@ -46,6 +46,7 @@ class HarnessContext:
         self.processes = processes  # shared ProcessManager (may be None in tests)
         self.executor = executor    # shared Executor backend (may be None in tests)
         self.hooks = hooks          # shared HookManager (may be None in tests)
+        self.store = store          # shared TaskStore (for approvals; may be None)
 
     # ---- workspace ----------------------------------------------------------
 
@@ -134,7 +135,7 @@ class HarnessServer:
         if ctx is None:
             ctx = HarnessContext(
                 self.config, key=key, processes=self.processes,
-                executor=self.executor, hooks=self.hooks,
+                executor=self.executor, hooks=self.hooks, store=self.tasks,
             )
             self._sessions[key] = ctx
         return ctx
@@ -152,7 +153,7 @@ class HarnessServer:
         if ctx is None:
             ctx = HarnessContext(
                 self.config, key=key, processes=self.processes,
-                executor=self.executor, hooks=self.hooks,
+                executor=self.executor, hooks=self.hooks, store=self.tasks,
             )
             self._sessions[key] = ctx
         # (Re)bind to the task's current workspace + permission mode each call, so

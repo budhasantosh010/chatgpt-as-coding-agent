@@ -14,7 +14,8 @@ from mcp.server.transport_security import TransportSecuritySettings
 from .config import Config
 from .context import HarnessContext, HarnessServer
 from .hooks import ToolCall
-from .policy import Capability
+from .permissions import action_for, decide as decide_action
+from .policy import Capability, Decision
 from .scrub import scrub_text
 from .security import SecurityError
 from .tools import files, git, memory, process, search, shell, skills, workspace, worktree
@@ -102,17 +103,53 @@ def _finalize(hc: HarnessContext, text: str) -> str:
     return text
 
 
+def _gate(hc: HarnessContext, capability: Capability, tool: str, command: str | None) -> str | None:
+    """Decide whether a call proceeds under the active permission mode, refining
+    EXECUTE by classifying the command (auto_workspace lets local commands run
+    but asks for network/remote/deploy). Returns None to proceed, or an
+    approval-required message string to return to the caller. Raises on DENY."""
+    action = action_for(capability, command)
+    decision = decide_action(hc.policy.mode, action)
+    if decision is Decision.ALLOW:
+        return None
+    if decision is Decision.DENY:
+        raise SecurityError(
+            f"'{action.value}' is denied in '{hc.policy.mode}' mode. Only the "
+            "operator can change the mode locally."
+        )
+    # ASK — allow only if the operator has granted a one-shot approval.
+    store = getattr(hc, "store", None)
+    if store is None or not getattr(hc, "task_id", None):
+        raise SecurityError(
+            f"'{action.value}' needs approval, but this call has no task_id (start a "
+            "task so approvals can be tracked)."
+        )
+    granted = store.grantable_approval(hc.task_id, action.value)
+    if granted:
+        store.consume_approval(granted["id"])
+        return None
+    aid = store.add_approval(hc.task_id, action.value, f"{tool}: {(command or '')[:120]}")
+    return (
+        f"⏸ APPROVAL REQUIRED — '{action.value}' is not auto-allowed in "
+        f"'{hc.policy.mode}' mode.\nThe operator must approve on the machine:\n"
+        f"    python -m harness approvals approve {aid}\n"
+        f"Then retry the same call. (Deny with: python -m harness approvals deny {aid})"
+    )
+
+
 async def _call(hc: HarnessContext, capability: Capability | None, fn, *args) -> str:
-    """Enforce the capability, run lifecycle hooks around the pure tool, and
-    normalize expected errors. The tool name is ``fn.__name__`` and the session
-    key is ``hc.key`` — so hooks (audit, scrub, future policies) attach here
-    without any change to the 30 individual wrappers below. Every return path,
-    including normalized errors, goes through ``_finalize`` so nothing bypasses
-    scrubbing."""
+    """Enforce permissions (mode + action class + approvals), run lifecycle hooks
+    around the pure tool, and normalize expected errors. The tool name is
+    ``fn.__name__`` and the session key is ``hc.key`` — so hooks attach here
+    without touching the wrappers. Every return path, including normalized errors
+    and approval prompts, goes through scrubbing."""
     hooks = getattr(hc, "hooks", None)
     try:
         if capability is not None:
-            hc.policy.require(capability)
+            command = args[0] if (capability is Capability.EXECUTE and args and isinstance(args[0], str)) else None
+            gate = _gate(hc, capability, fn.__name__, command)
+            if gate is not None:
+                return _finalize(hc, gate)
         if hooks is None:
             return await fn(hc, *args)
         call = ToolCall(tool=fn.__name__, capability=capability, session_key=hc.key, args=args, context=hc)
