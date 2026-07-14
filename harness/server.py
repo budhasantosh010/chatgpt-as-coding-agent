@@ -19,6 +19,7 @@ from .scrub import scrub_text
 from .security import SecurityError
 from .tools import files, git, memory, process, search, shell, skills, workspace, worktree
 from .tools import todos as todos_tool
+from .tasks import tools as tasktools
 
 # Single source of truth for which capability each tool needs. Tools that change
 # state (checkpoints write a git ref; memory/todos write JSON) are mutations, not
@@ -77,6 +78,16 @@ def _session_key(ctx: Context | None) -> str:
     except Exception:  # noqa: BLE001 - never let key extraction break a tool call
         pass
     return "default"
+
+
+def _scrub_server(server: HarnessServer, text: str) -> str:
+    """Scrub server-scoped tool output (task tools that don't run in a single
+    HarnessContext) so they share the same redaction guarantee."""
+    if getattr(server.config, "scrub_output", False):
+        scrubbed, n = scrub_text(text)
+        if n:
+            return f"{scrubbed}\n[harness: redacted {n} secret(s) from this output]"
+    return text
 
 
 def _finalize(hc: HarnessContext, text: str) -> str:
@@ -366,6 +377,69 @@ def build_mcp(config: Config, server: HarnessServer) -> FastMCP:
         """Show the current task plan and how many steps are complete."""
         hc = server.context_for(task_id, _session_key(ctx))
         return await _call(hc, Capability.READ, todos_tool.list_todos)
+
+    # ---- tasks (Codex-style engineering units; the isolation handle) -------
+
+    def _task_call(fn, *args) -> str:
+        try:
+            return _scrub_server(server, fn(server, *args))
+        except _EXPECTED_ERRORS as exc:
+            return _scrub_server(server, f"Error: {exc}")
+
+    @mcp.tool()
+    async def start_task(project_path: str, goal: str, permission_mode: str = "auto_workspace", title: str = "", ctx: Context = None) -> str:
+        """Begin a task: bind a workspace + goal + permission mode and get a
+        task_id. Pass that task_id to every subsequent tool call so the task's
+        work is isolated from other conversations and resumable. permission_mode:
+        plan | build_ask | auto_workspace | bypass_sandboxed | full | read_only."""
+        return _task_call(tasktools.start_task, project_path, goal, permission_mode, title)
+
+    @mcp.tool()
+    async def list_tasks(status: str | None = None, ctx: Context = None) -> str:
+        """List tasks (optionally by state: new/planning/implementing/…/completed)."""
+        return _task_call(tasktools.list_tasks, status)
+
+    @mcp.tool()
+    async def task_status(task_id: str, ctx: Context = None) -> str:
+        """Show a task's goal, state, plan, acceptance criteria, changed files,
+        and recent events. Use to resume or review."""
+        return _task_call(tasktools.task_status, task_id)
+
+    @mcp.tool()
+    async def resume_task(task_id: str, ctx: Context = None) -> str:
+        """Reload a task's state to continue it in a new conversation."""
+        return _task_call(tasktools.resume_task, task_id)
+
+    @mcp.tool()
+    async def set_task_goal(task_id: str, goal: str, ctx: Context = None) -> str:
+        """Update a task's goal."""
+        return _task_call(tasktools.set_task_goal, task_id, goal)
+
+    @mcp.tool()
+    async def set_acceptance_criteria(task_id: str, criteria: list, ctx: Context = None) -> str:
+        """Set the checklist that defines 'done' for this task (list of strings)."""
+        return _task_call(tasktools.set_acceptance_criteria, task_id, criteria)
+
+    @mcp.tool()
+    async def advance_task(task_id: str, to_state: str, ctx: Context = None) -> str:
+        """Move a task to a new lifecycle state (new→discovering→planning→
+        implementing→validating→repairing→review_ready→completed; or blocked)."""
+        return _task_call(tasktools.advance_task, task_id, to_state)
+
+    @mcp.tool()
+    async def finish_task(task_id: str, result: str = "", ctx: Context = None) -> str:
+        """Mark a task completed (must be review_ready first) with a result note."""
+        return _task_call(tasktools.finish_task, task_id, result)
+
+    @mcp.tool()
+    async def cancel_task(task_id: str, reason: str = "", ctx: Context = None) -> str:
+        """Abandon a task, recording why."""
+        return _task_call(tasktools.cancel_task, task_id, reason)
+
+    @mcp.tool()
+    async def register_project(path: str, name: str = "", ctx: Context = None) -> str:
+        """Register a project directory so tasks can be grouped under it."""
+        return _task_call(tasktools.register_project, path, name)
 
     # ---- health (unauthenticated, no secrets) ------------------------------
 
