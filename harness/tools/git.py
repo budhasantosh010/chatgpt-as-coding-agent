@@ -14,9 +14,9 @@ from datetime import datetime
 from pathlib import Path
 
 from ..context import HarnessContext
-from ..proc import run_subprocess
 from ..security import SecurityError, is_within
 from ..session import _now_iso  # reuse the timestamp helper
+from . import gitcmd
 
 _REF_PREFIX = "refs/harness/checkpoints/"
 
@@ -30,15 +30,15 @@ _IDENT_ENV = {
 }
 
 
-async def _git(base: Path, *args: str, env: dict | None = None, timeout: int = 60):
+async def _git(hc: HarnessContext, base: Path, *args: str, env: dict | None = None, timeout: int = 60):
     merged = dict(_IDENT_ENV)
     if env:
         merged.update(env)
-    return await run_subprocess(["git", "-C", str(base), *args], timeout=timeout, env=merged)
+    return await gitcmd.git(hc, base, *args, env=merged, timeout=timeout)
 
 
-async def _repo_root(ws: Path) -> Path | None:
-    r = await _git(ws, "rev-parse", "--show-toplevel")
+async def _repo_root(hc: HarnessContext, ws: Path) -> Path | None:
+    r = await _git(hc, ws, "rev-parse", "--show-toplevel")
     if r.returncode != 0 or not r.stdout.strip():
         return None
     return Path(os.path.realpath(r.stdout.strip()))
@@ -87,16 +87,16 @@ def _tmp_index(hc: HarnessContext) -> Path:
 
 async def git_diff(hc: HarnessContext, path: str | None = None) -> str:
     ws = hc.require_workspace()
-    root = await _repo_root(ws)
+    root = await _repo_root(hc, ws)
     if root is None:
         return "Not a git repository. Run: git init"
 
-    status = (await _git(root, "status", "--short")).stdout.strip()
-    head = await _git(root, "rev-parse", "--verify", "HEAD")
+    status = (await _git(hc, root, "status", "--short")).stdout.strip()
+    head = await _git(hc, root, "rev-parse", "--verify", "HEAD")
     diff_args = ["diff", "HEAD"] if head.returncode == 0 else ["diff"]
     if path:
         diff_args += ["--", path]
-    diff = (await _git(root, *diff_args)).stdout
+    diff = (await _git(hc, root, *diff_args)).stdout
 
     max_chars = hc.config.max_output_chars
     truncated = ""
@@ -112,7 +112,7 @@ async def git_diff(hc: HarnessContext, path: str | None = None) -> str:
 
 async def create_checkpoint(hc: HarnessContext, label: str | None = None) -> str:
     ws = hc.require_workspace()
-    root = await _repo_root(ws)
+    root = await _repo_root(hc, ws)
     if root is None:
         return "Not a git repository. Run: git init  (checkpoints need git)."
     _guard_root(hc, root)
@@ -121,21 +121,21 @@ async def create_checkpoint(hc: HarnessContext, label: str | None = None) -> str
     tmp = _tmp_index(hc)
     env = {"GIT_INDEX_FILE": str(tmp)}
     try:
-        add = await _git(root, "add", "-A", env=env)
+        add = await _git(hc, root, "add", "-A", env=env)
         if add.returncode != 0:
             return f"Error staging snapshot: {add.stderr.strip()}"
-        tree = (await _git(root, "write-tree", env=env)).stdout.strip()
+        tree = (await _git(hc, root, "write-tree", env=env)).stdout.strip()
         if not tree:
             return "Error: could not write snapshot tree."
-        head = await _git(root, "rev-parse", "--verify", "HEAD")
+        head = await _git(hc, root, "rev-parse", "--verify", "HEAD")
         ct_args = ["commit-tree", tree, "-m", f"harness checkpoint: {label}"]
         if head.returncode == 0:
             ct_args += ["-p", head.stdout.strip()]
-        commit = (await _git(root, *ct_args, env=env)).stdout.strip()
+        commit = (await _git(hc, root, *ct_args, env=env)).stdout.strip()
         if not commit:
             return "Error: could not create snapshot commit."
         cid = f"cp-{datetime.now():%Y%m%d-%H%M%S}-{secrets.token_hex(2)}"
-        upd = await _git(root, "update-ref", f"{_REF_PREFIX}{cid}", commit)
+        upd = await _git(hc, root, "update-ref", f"{_REF_PREFIX}{cid}", commit)
         if upd.returncode != 0:
             return f"Error creating checkpoint ref: {upd.stderr.strip()}"
     finally:
@@ -161,7 +161,7 @@ async def list_checkpoints(hc: HarnessContext) -> str:
 
 async def restore_checkpoint(hc: HarnessContext, checkpoint_id: str) -> str:
     ws = hc.require_workspace()
-    root = await _repo_root(ws)
+    root = await _repo_root(hc, ws)
     if root is None:
         return "Not a git repository."
     _guard_root(hc, root)
@@ -176,16 +176,16 @@ async def restore_checkpoint(hc: HarnessContext, checkpoint_id: str) -> str:
     env = {"GIT_INDEX_FILE": str(tmp)}
     removed: list[str] = []
     try:
-        await _git(root, "add", "-A", env=env)
-        now_tree = (await _git(root, "write-tree", env=env)).stdout.strip()
-        rt = await _git(root, "read-tree", commit, env=env)
+        await _git(hc, root, "add", "-A", env=env)
+        now_tree = (await _git(hc, root, "write-tree", env=env)).stdout.strip()
+        rt = await _git(hc, root, "read-tree", commit, env=env)
         if rt.returncode != 0:
             return f"Error reading checkpoint tree: {rt.stderr.strip()}"
-        co = await _git(root, "checkout-index", "-a", "-f", env=env)
+        co = await _git(hc, root, "checkout-index", "-a", "-f", env=env)
         if co.returncode != 0:
             return f"Error restoring files: {co.stderr.strip()}"
         # Delete files that were added after the checkpoint (present now, absent in target).
-        diff = await _git(root, "diff", "--diff-filter=A", "--name-only", f"{commit}^{{tree}}", now_tree)
+        diff = await _git(hc, root, "diff", "--diff-filter=A", "--name-only", f"{commit}^{{tree}}", now_tree)
         for rel in diff.stdout.splitlines():
             rel = rel.strip()
             if not rel:

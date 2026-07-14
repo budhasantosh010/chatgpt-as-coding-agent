@@ -59,6 +59,12 @@ class Executor:
     def build_env(self, extra: dict | None = None):
         return extra  # None => inherit host env (base Executor is permissive)
 
+    def build_tool_env(self, extra: dict | None = None) -> dict:
+        """Environment for harness-internal tools (git, ripgrep) run via
+        ``run_argv``. Always minimal + complete, regardless of backend, so our
+        own tooling can never leak host secrets either."""
+        return build_local_env(getattr(self, "env_allowlist", ()), extra)
+
     async def run(
         self,
         command: str,
@@ -69,6 +75,21 @@ class Executor:
         return await run_subprocess(
             self.spawn_argv(command, cwd), cwd=str(cwd), timeout=timeout,
             env=self.build_env(env), inherit_env=self.inherit_env,
+        )
+
+    async def run_argv(
+        self,
+        argv: list[str],
+        cwd: str | Path | None = None,
+        timeout: int = 60,
+        env: dict[str, str] | None = None,
+    ) -> ProcessResult:
+        """Run a raw argv (a harness-internal tool like git/rg) in a restricted
+        environment. This is the single seam those tools use — nothing shells out
+        directly, so env restriction is enforced everywhere."""
+        return await run_subprocess(
+            list(argv), cwd=str(cwd) if cwd is not None else None,
+            timeout=timeout, env=self.build_tool_env(env), inherit_env=False,
         )
 
 

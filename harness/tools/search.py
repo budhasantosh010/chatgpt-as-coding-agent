@@ -9,7 +9,7 @@ from pathlib import Path
 import anyio
 
 from ..context import HarnessContext
-from ..proc import run_subprocess
+from ..executor import LocalExecutor
 from ..security import is_secret_path
 
 # Heavy/noise directories that pollute results and waste context. Skipped by
@@ -88,7 +88,10 @@ async def grep(
         args += ["--context", str(context)]
     args += ["--", pattern, str(base)]
 
-    result = await run_subprocess(args, timeout=30)
+    executor = getattr(hc, "executor", None) or LocalExecutor(
+        hc.config.shell, getattr(hc.config, "env_allowlist", ())
+    )
+    result = await executor.run_argv(args, timeout=30)
     if result.timed_out:
         return "grep timed out after 30s. Narrow the pattern or path."
     if result.returncode not in (0, 1):  # 1 == no matches, which is fine

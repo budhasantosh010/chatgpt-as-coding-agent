@@ -12,15 +12,15 @@ import re
 from pathlib import Path
 
 from ..context import HarnessContext
-from ..proc import run_subprocess
+from . import gitcmd
 
 
-async def _git(base: Path, *args: str, timeout: int = 60):
-    return await run_subprocess(["git", "-C", str(base), *args], timeout=timeout)
+async def _git(hc: HarnessContext, base: Path, *args: str, timeout: int = 60):
+    return await gitcmd.git(hc, base, *args, timeout=timeout)
 
 
-async def _repo_root(ws: Path) -> Path | None:
-    r = await _git(ws, "rev-parse", "--show-toplevel")
+async def _repo_root(hc: HarnessContext, ws: Path) -> Path | None:
+    r = await _git(hc, ws, "rev-parse", "--show-toplevel")
     if r.returncode != 0 or not r.stdout.strip():
         return None
     return Path(os.path.realpath(r.stdout.strip()))
@@ -36,7 +36,7 @@ def _worktree_dir(hc: HarnessContext, repo_root: Path, safe_name: str) -> Path:
 
 async def create_worktree(hc: HarnessContext, name: str, base: str | None = None) -> str:
     ws = hc.require_workspace()
-    root = await _repo_root(ws)
+    root = await _repo_root(hc, ws)
     if root is None:
         return "Not a git repository. Worktrees need git."
     safe = _safe(name)
@@ -48,7 +48,7 @@ async def create_worktree(hc: HarnessContext, name: str, base: str | None = None
     args = ["worktree", "add", "-b", safe, str(target)]
     if base:
         args.append(base)
-    r = await _git(root, *args)
+    r = await _git(hc, root, *args)
     if r.returncode != 0:
         return f"Error creating worktree: {r.stderr.strip() or r.stdout.strip()}"
     hc.log("create_worktree", name=safe, path=str(target))
@@ -60,21 +60,21 @@ async def create_worktree(hc: HarnessContext, name: str, base: str | None = None
 
 async def list_worktrees(hc: HarnessContext) -> str:
     ws = hc.require_workspace()
-    root = await _repo_root(ws)
+    root = await _repo_root(hc, ws)
     if root is None:
         return "Not a git repository."
-    r = await _git(root, "worktree", "list")
+    r = await _git(hc, root, "worktree", "list")
     return r.stdout.strip() or "No worktrees."
 
 
 async def remove_worktree(hc: HarnessContext, name: str) -> str:
     ws = hc.require_workspace()
-    root = await _repo_root(ws)
+    root = await _repo_root(hc, ws)
     if root is None:
         return "Not a git repository."
     safe = _safe(name)
     target = _worktree_dir(hc, root, safe)
-    r = await _git(root, "worktree", "remove", "--force", str(target))
+    r = await _git(hc, root, "worktree", "remove", "--force", str(target))
     if r.returncode != 0:
         return f"Error removing worktree: {r.stderr.strip() or r.stdout.strip()}"
     hc.log("remove_worktree", name=safe)
