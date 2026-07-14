@@ -42,9 +42,19 @@ async def git(
     *args: str,
     env: dict | None = None,
     timeout: int = 60,
+    hardened: bool = True,
 ) -> ProcessResult:
-    merged = dict(_HARDEN_ENV)
-    if env:
-        merged.update(env)
-    argv = ["git", "-c", f"core.hooksPath={os.devnull}", "-C", str(base), *args]
+    """Run git through the session executor. hardened=True (default) neutralizes
+    repo hooks + ignores system/global config — correct for the harness's own
+    plumbing (checkpoints/worktrees/inspection) against possibly-untrusted repos.
+    hardened=False honors the user's git config, identity, and hooks — needed for
+    explicit user-intended actions like a real commit."""
+    if hardened:
+        merged = dict(_HARDEN_ENV)
+        if env:
+            merged.update(env)
+        argv = ["git", "-c", f"core.hooksPath={os.devnull}", "-C", str(base), *args]
+    else:
+        merged = dict(env) if env else None
+        argv = ["git", "-C", str(base), *args]
     return await _executor(hc).run_argv(argv, cwd=str(base), timeout=timeout, env=merged)

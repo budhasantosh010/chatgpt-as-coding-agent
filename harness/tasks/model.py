@@ -55,6 +55,7 @@ class Task(BaseModel):
     id: str
     project_id: str
     workspace_path: str
+    parent_id: str | None = None
     title: str = ""
     goal: str = ""
     acceptance_criteria: list[str] = Field(default_factory=list)

@@ -8,7 +8,7 @@ write the pure fn in ``tools/`` + one wrapper here.
 
 from __future__ import annotations
 
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.fastmcp import Context, FastMCP, Image
 from mcp.server.transport_security import TransportSecuritySettings
 
 from .config import Config
@@ -18,7 +18,10 @@ from .permissions import action_for, decide as decide_action
 from .policy import Capability, Decision
 from .scrub import scrub_text
 from .security import SecurityError
-from .tools import diagnostics, files, git, memory, process, repomap, search, shell, skills, workspace, worktree
+from .tools import (
+    diagnostics, files, git, images, memory, notebook, process, repomap,
+    search, shell, skills, vcs, workspace, worktree,
+)
 from .tools import todos as todos_tool
 from .tasks import tools as tasktools
 
@@ -302,6 +305,47 @@ def build_mcp(config: Config, server: HarnessServer) -> FastMCP:
         hc = server.context_for(task_id, _session_key(ctx))
         return await _call_idem(hc, Capability.WRITE, operation_id, files.apply_patch, patch)
 
+    @mcp.tool()
+    async def read_image(path: str, task_id: str | None = None, ctx: Context = None) -> Image:
+        """Read an image file (png/jpg/gif/webp/bmp) so you can SEE it — a
+        screenshot, diagram, or UI mockup. Path is confinement + secret gated."""
+        hc = server.context_for(task_id, _session_key(ctx))
+        data, fmt = images.read_image_bytes(hc, path)
+        return Image(data=data, format=fmt)
+
+    @mcp.tool()
+    async def notebook_read(path: str, task_id: str | None = None, ctx: Context = None) -> str:
+        """Read a Jupyter notebook (.ipynb) as indexed cells with their source."""
+        hc = server.context_for(task_id, _session_key(ctx))
+        return await _call(hc, Capability.READ, notebook.notebook_read, path)
+
+    @mcp.tool()
+    async def notebook_edit(path: str, cell_index: int, source: str = "", mode: str = "replace", cell_type: str = "code", operation_id: str | None = None, task_id: str | None = None, ctx: Context = None) -> str:
+        """Edit a notebook cell. mode: 'replace' (set source), 'insert' (new cell
+        before cell_index), 'delete'. Keeps the .ipynb valid."""
+        hc = server.context_for(task_id, _session_key(ctx))
+        return await _call_idem(hc, Capability.WRITE, operation_id, notebook.notebook_edit, path, cell_index, source, mode, cell_type)
+
+    # ---- version control actions (commit / PR) -----------------------------
+
+    @mcp.tool()
+    async def git_commit(message: str, add_all: bool = True, operation_id: str | None = None, task_id: str | None = None, ctx: Context = None) -> str:
+        """Stage (all changes by default) and commit with the user's real git
+        identity + hooks. Use after review. Local only."""
+        hc = server.context_for(task_id, _session_key(ctx))
+        return await _call_idem(hc, Capability.WRITE, operation_id, vcs.git_commit, message, add_all)
+
+    @mcp.tool()
+    async def open_pr(title: str, body: str = "", base: str | None = None, task_id: str | None = None, ctx: Context = None) -> str:
+        """Open a GitHub pull request via the gh CLI. This is a remote action, so
+        in auto_workspace/build_ask modes it requires operator approval."""
+        import shlex
+        hc = server.context_for(task_id, _session_key(ctx))
+        cmd = f"gh pr create --title {shlex.quote(title)} --body {shlex.quote(body or title)}"
+        if base:
+            cmd += f" --base {shlex.quote(base)}"
+        return await _call(hc, Capability.EXECUTE, shell.run_command, cmd, None, 120)
+
     # ---- code intelligence (READ) ------------------------------------------
 
     @mcp.tool()
@@ -480,6 +524,13 @@ def build_mcp(config: Config, server: HarnessServer) -> FastMCP:
         return _task_call(tasktools.start_task, project_path, goal, permission_mode, title)
 
     @mcp.tool()
+    async def create_subtask(parent_task_id: str, goal: str, title: str = "", ctx: Context = None) -> str:
+        """Decompose a task into a child subtask (same project/workspace/mode).
+        These are subtasks the same ChatGPT works through — the harness has no
+        model of its own, so there are no autonomous LLM sub-agents."""
+        return _task_call(tasktools.create_subtask, parent_task_id, goal, title)
+
+    @mcp.tool()
     async def list_tasks(status: str | None = None, ctx: Context = None) -> str:
         """List tasks (optionally by state: new/planning/implementing/…/completed)."""
         return _task_call(tasktools.list_tasks, status)
@@ -525,6 +576,40 @@ def build_mcp(config: Config, server: HarnessServer) -> FastMCP:
     async def register_project(path: str, name: str = "", ctx: Context = None) -> str:
         """Register a project directory so tasks can be grouped under it."""
         return _task_call(tasktools.register_project, path, name)
+
+    # ---- federation (consume other MCP servers) ----------------------------
+
+    @mcp.tool()
+    async def mcp_servers(ctx: Context = None) -> str:
+        """List configured external MCP servers you can federate with."""
+        names = server.federation.names()
+        if not names:
+            return ("No external MCP servers configured. Add them via "
+                    "HARNESS_MCP_SERVERS or <state_dir>/mcp_servers.json.")
+        return "# Federated MCP servers\n" + "\n".join(f"  - {n}" for n in names)
+
+    @mcp.tool()
+    async def mcp_tools(server_name: str, ctx: Context = None) -> str:
+        """List the tools an external MCP server exposes."""
+        try:
+            tools = await server.federation.list_tools(server_name)
+        except _EXPECTED_ERRORS as exc:
+            return _scrub_server(server, f"Error: {exc}")
+        except Exception as exc:  # noqa: BLE001 - external connection issues
+            return _scrub_server(server, f"Error connecting to {server_name!r}: {exc}")
+        body = "\n".join(f"  - {name}: {desc}" for name, desc in tools)
+        return _scrub_server(server, f"# Tools on {server_name}\n{body}")
+
+    @mcp.tool()
+    async def mcp_call(server_name: str, tool: str, arguments: dict | None = None, ctx: Context = None) -> str:
+        """Call a tool on an external MCP server and return its output."""
+        try:
+            out = await server.federation.call_tool(server_name, tool, arguments or {})
+        except _EXPECTED_ERRORS as exc:
+            return _scrub_server(server, f"Error: {exc}")
+        except Exception as exc:  # noqa: BLE001 - external connection issues
+            return _scrub_server(server, f"Error calling {tool!r} on {server_name!r}: {exc}")
+        return _scrub_server(server, out)
 
     # ---- health (unauthenticated, no secrets) ------------------------------
 

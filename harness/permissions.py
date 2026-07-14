@@ -33,6 +33,7 @@ class Action(str, Enum):
 # Command patterns → action class (first match wins). High-signal only.
 _CMD_PATTERNS: tuple[tuple[Action, re.Pattern], ...] = (
     (Action.GIT_REMOTE_WRITE, re.compile(r"\bgit\s+(push|pull|fetch|remote|clone)\b", re.I)),
+    (Action.GIT_REMOTE_WRITE, re.compile(r"\bgh\s+(pr|repo|release|api)\b", re.I)),
     (Action.PACKAGE_INSTALL, re.compile(r"\b(npm|pnpm|yarn|pip|pip3|poetry|cargo|gem|apt|apt-get|brew|go)\s+(install|add|get)\b", re.I)),
     (Action.PACKAGE_INSTALL, re.compile(r"\bnpx\b|\buvx\b", re.I)),
     (Action.DEPLOYMENT, re.compile(r"\b(kubectl|helm|terraform|serverless|vercel|netlify|fly|heroku|docker\s+push)\b", re.I)),

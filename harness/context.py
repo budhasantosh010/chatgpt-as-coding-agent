@@ -107,6 +107,7 @@ class HarnessServer:
 
     def __init__(self, config: Config):
         from .executor import build_executor
+        from .federation import FederationManager
         from .hooks import (
             HookManager,
             make_audit_hook,
@@ -120,6 +121,7 @@ class HarnessServer:
         self.processes = ProcessManager()
         self.executor = build_executor(config)
         self.tasks = TaskStore(config.state_dir / "tasks.db")
+        self.federation = FederationManager(config.mcp_servers)
         self.hooks = HookManager()
         if config.audit_log:
             self.hooks.on_pre(make_audit_hook(config.state_dir / "audit.jsonl"))

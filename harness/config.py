@@ -129,6 +129,9 @@ class Config:
     # Extra env var names a command may see, on top of the safe base set. Anything
     # not listed (cloud creds, tokens) is withheld so `run_command` can't print it.
     env_allowlist: list[str] = field(default_factory=list)
+    # Other MCP servers to federate: {name: {command, args} | {url}}. From
+    # HARNESS_MCP_SERVERS (JSON) or <state_dir>/mcp_servers.json.
+    mcp_servers: dict = field(default_factory=dict)
 
     # ---- derived / validated ------------------------------------------------
 
@@ -231,6 +234,22 @@ class Config:
             cfg.secret_globs = list(DEFAULT_SECRET_GLOBS) + _split_list(globs_raw, sep=",")
         if env_allow_raw:
             cfg.env_allowlist = _split_list(env_allow_raw, sep=",")
+        # MCP federation servers: env JSON wins, else a file in the state dir.
+        import json as _json
+
+        servers_raw = _env("MCP_SERVERS")
+        if servers_raw:
+            try:
+                cfg.mcp_servers = _json.loads(servers_raw)
+            except ValueError:
+                cfg.mcp_servers = {}
+        else:
+            f = cfg.state_dir / "mcp_servers.json"
+            if f.exists():
+                try:
+                    cfg.mcp_servers = _json.loads(f.read_text(encoding="utf-8"))
+                except (ValueError, OSError):
+                    cfg.mcp_servers = {}
         return cfg
 
     def redacted(self) -> dict:

@@ -53,13 +53,31 @@ def start_task(server, project_path: str, goal: str, permission_mode: str = "aut
     )
 
 
+def create_subtask(server, parent_task_id: str, goal: str, title: str = "") -> str:
+    """Decompose a task into a child task (same project/workspace/mode). Note:
+    these are sub-*tasks* the same ChatGPT works through — not autonomous LLM
+    sub-agents, which don't apply here (the harness has no model; ChatGPT is the
+    brain)."""
+    parent = _get(server, parent_task_id)
+    if not goal or not goal.strip():
+        raise SecurityError("A subtask needs a goal.")
+    child = server.tasks.create_task(
+        parent.project_id, parent.workspace_path, goal=goal.strip(),
+        title=(title or goal[:60]).strip(), permission_mode=parent.permission_mode,
+        parent_id=parent.id,
+    )
+    server.tasks.add_event(parent.id, "subtask_created", child=child.id, goal=child.goal)
+    return f"Created subtask {child.id} under {parent.id}\n  goal: {child.goal}\n  pass task_id=\"{child.id}\" for its work."
+
+
 def list_tasks(server, status: str | None = None) -> str:
     tasks = server.tasks.list_tasks(status=status)
     if not tasks:
         return "No tasks yet. Create one with start_task(project_path, goal)."
     lines = ["# Tasks"]
     for t in tasks:
-        lines.append(f"  [{t.id}] {t.status.value:12} {t.title or t.goal[:50]}")
+        indent = "    └ " if t.parent_id else "  "
+        lines.append(f"{indent}[{t.id}] {t.status.value:12} {t.title or t.goal[:50]}")
     return "\n".join(lines)
 
 
