@@ -7,9 +7,8 @@ can resume exactly where the last left off (surfaced in session_status).
 
 from __future__ import annotations
 
-import json
-
 from ..context import HarnessContext
+from ..statefile import read_json, write_json_atomic
 
 _VALID_STATUS = {"pending", "in_progress", "completed"}
 _MARKS = {"pending": "[ ]", "in_progress": "[~]", "completed": "[x]"}
@@ -22,17 +21,11 @@ def _todos_path(hc: HarnessContext):
 
 
 def load_todos(hc: HarnessContext) -> list[dict]:
-    p = _todos_path(hc)
-    if not p.exists():
-        return []
-    try:
-        return json.loads(p.read_text(encoding="utf-8"))
-    except (ValueError, OSError):
-        return []
+    return read_json(_todos_path(hc), [])
 
 
 def _save(hc: HarnessContext, items: list[dict]) -> None:
-    _todos_path(hc).write_text(json.dumps(items, indent=2), encoding="utf-8")
+    write_json_atomic(_todos_path(hc), items)
 
 
 def format_todos(items: list[dict]) -> str:

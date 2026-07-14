@@ -7,6 +7,7 @@ there without ever touching your main checkout.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 from pathlib import Path
@@ -31,7 +32,10 @@ def _safe(name: str) -> str:
 
 
 def _worktree_dir(hc: HarnessContext, repo_root: Path, safe_name: str) -> Path:
-    return hc.config.state_dir / "worktrees" / repo_root.name / safe_name
+    # Namespace by a hash of the FULL repo path, not just the basename, so two
+    # different repos that happen to share a folder name can't collide.
+    digest = hashlib.sha256(str(repo_root).encode("utf-8")).hexdigest()[:8]
+    return hc.config.state_dir / "worktrees" / f"{repo_root.name}-{digest}" / safe_name
 
 
 async def create_worktree(hc: HarnessContext, name: str, base: str | None = None) -> str:
@@ -67,15 +71,26 @@ async def list_worktrees(hc: HarnessContext) -> str:
     return r.stdout.strip() or "No worktrees."
 
 
-async def remove_worktree(hc: HarnessContext, name: str) -> str:
+async def remove_worktree(hc: HarnessContext, name: str, force: bool = False) -> str:
     ws = hc.require_workspace()
     root = await _repo_root(hc, ws)
     if root is None:
         return "Not a git repository."
     safe = _safe(name)
     target = _worktree_dir(hc, root, safe)
-    r = await _git(hc, root, "worktree", "remove", "--force", str(target))
+    # Try a safe remove first; only force (which discards uncommitted work) when
+    # the caller explicitly asks. Prevents silent loss of in-progress changes.
+    args = ["worktree", "remove", str(target)]
+    if force:
+        args.insert(2, "--force")
+    r = await _git(hc, root, *args)
     if r.returncode != 0:
-        return f"Error removing worktree: {r.stderr.strip() or r.stdout.strip()}"
-    hc.log("remove_worktree", name=safe)
+        err = (r.stderr.strip() or r.stdout.strip())
+        if not force and ("dirty" in err.lower() or "contains modified" in err.lower() or "use --force" in err.lower()):
+            return (
+                f"Worktree '{safe}' has uncommitted changes. Commit them, or call "
+                f"remove_worktree('{name}', force=true) to discard and remove."
+            )
+        return f"Error removing worktree: {err}"
+    hc.log("remove_worktree", name=safe, force=force)
     return f"Removed worktree '{safe}'."

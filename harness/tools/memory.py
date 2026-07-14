@@ -10,11 +10,11 @@ never pollutes the repo.
 
 from __future__ import annotations
 
-import json
 import re
 
 from ..context import HarnessContext
 from ..session import _now_iso
+from ..statefile import locked, read_json, write_json_atomic
 
 
 def _mem_path(hc: HarnessContext):
@@ -24,43 +24,48 @@ def _mem_path(hc: HarnessContext):
 
 
 def load_memories(hc: HarnessContext) -> list[dict]:
-    p = _mem_path(hc)
-    if not p.exists():
-        return []
-    try:
-        return json.loads(p.read_text(encoding="utf-8"))
-    except (ValueError, OSError):
-        return []
+    return read_json(_mem_path(hc), [])
 
 
 def _save(hc: HarnessContext, items: list[dict]) -> None:
-    _mem_path(hc).write_text(json.dumps(items, indent=2), encoding="utf-8")
+    write_json_atomic(_mem_path(hc), items)
 
 
 def _slug(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:40] or "note"
 
 
+def _next_auto_id(items: list[dict]) -> str:
+    """Highest existing m<N> + 1, so deleting an earlier memory never causes a
+    duplicate id (the old ``m{len+1}`` bug)."""
+    n = 0
+    for it in items:
+        m = re.fullmatch(r"m(\d+)", it.get("id", ""))
+        if m:
+            n = max(n, int(m.group(1)))
+    return f"m{n + 1}"
+
+
 async def remember(hc: HarnessContext, text: str, key: str | None = None) -> str:
     hc.require_workspace()
     if not text or not text.strip():
         raise ValueError("Cannot remember empty text.")
-    items = load_memories(hc)
-    mem_id = _slug(key) if key else None
-
-    if mem_id:
-        for item in items:
-            if item["id"] == mem_id:
-                item["text"] = text
-                item["created"] = _now_iso()
-                _save(hc, items)
-                hc.log("remember", id=mem_id, updated=True)
-                return f"Updated memory '{mem_id}'."
-    if not mem_id:
-        mem_id = f"m{len(items) + 1}"
-
-    items.append({"id": mem_id, "text": text, "created": _now_iso()})
-    _save(hc, items)
+    path = _mem_path(hc)
+    with locked(path):
+        items = read_json(path, [])
+        mem_id = _slug(key) if key else None
+        if mem_id:
+            for item in items:
+                if item["id"] == mem_id:
+                    item["text"] = text
+                    item["created"] = _now_iso()
+                    write_json_atomic(path, items)
+                    hc.log("remember", id=mem_id, updated=True)
+                    return f"Updated memory '{mem_id}'."
+        if not mem_id:
+            mem_id = _next_auto_id(items)
+        items.append({"id": mem_id, "text": text, "created": _now_iso()})
+        write_json_atomic(path, items)
     hc.log("remember", id=mem_id)
     return f"Saved memory '{mem_id}'."
 
@@ -81,10 +86,12 @@ async def recall(hc: HarnessContext, query: str | None = None) -> str:
 
 async def forget(hc: HarnessContext, key: str) -> str:
     hc.require_workspace()
-    items = load_memories(hc)
-    kept = [it for it in items if it["id"] != key]
-    if len(kept) == len(items):
-        return f"No memory with id {key!r}. Use recall() to list ids."
-    _save(hc, kept)
+    path = _mem_path(hc)
+    with locked(path):
+        items = read_json(path, [])
+        kept = [it for it in items if it["id"] != key]
+        if len(kept) == len(items):
+            return f"No memory with id {key!r}. Use recall() to list ids."
+        write_json_atomic(path, kept)
     hc.log("forget", id=key)
     return f"Forgot memory {key!r}."

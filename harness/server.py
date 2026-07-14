@@ -269,10 +269,11 @@ def build_mcp(config: Config, server: HarnessServer) -> FastMCP:
         return await _call(hc, Capability.READ, worktree.list_worktrees)
 
     @mcp.tool()
-    async def remove_worktree(name: str, ctx: Context = None) -> str:
-        """Remove a task worktree created with create_worktree."""
+    async def remove_worktree(name: str, force: bool = False, ctx: Context = None) -> str:
+        """Remove a task worktree created with create_worktree. Refuses if it has
+        uncommitted changes unless force=true (which discards them)."""
         hc = server.session_for(_session_key(ctx))
-        return await _call(hc, Capability.WRITE, worktree.remove_worktree, name)
+        return await _call(hc, Capability.WRITE, worktree.remove_worktree, name, force)
 
     # ---- memory (READ — harness metadata, safe in any mode) ----------------
 

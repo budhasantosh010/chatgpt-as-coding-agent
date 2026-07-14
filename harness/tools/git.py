@@ -59,21 +59,15 @@ def _cp_file(hc: HarnessContext) -> Path:
 
 
 def _load_checkpoints(hc: HarnessContext) -> list[dict]:
-    import json
+    from ..statefile import read_json
 
-    f = _cp_file(hc)
-    if not f.exists():
-        return []
-    try:
-        return json.loads(f.read_text(encoding="utf-8"))
-    except (ValueError, OSError):
-        return []
+    return read_json(_cp_file(hc), [])
 
 
 def _save_checkpoints(hc: HarnessContext, records: list[dict]) -> None:
-    import json
+    from ..statefile import write_json_atomic
 
-    _cp_file(hc).write_text(json.dumps(records, indent=2), encoding="utf-8")
+    write_json_atomic(_cp_file(hc), records)
 
 
 def _tmp_index(hc: HarnessContext) -> Path:
