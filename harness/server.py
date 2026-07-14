@@ -110,8 +110,17 @@ def _finalize(hc: HarnessContext, text: str) -> str:
     return text
 
 
+def _request_hash(task_id: str, tool: str, action: str, detail: str) -> str:
+    """Bind an approval to the exact request: task + tool + action + normalized
+    arguments. An identical retry matches; anything else re-asks."""
+    import hashlib
+
+    norm = " ".join((detail or "").split())  # collapse whitespace
+    return hashlib.sha256(f"{task_id}\0{tool}\0{action}\0{norm}".encode()).hexdigest()
+
+
 def _gate(hc: HarnessContext, capability: Capability | None, tool: str, command: str | None,
-          action=None) -> str | None:
+          action=None, detail: str | None = None) -> str | None:
     """Decide whether a call proceeds under the active permission mode, refining
     EXECUTE by classifying the command (auto_workspace lets local commands run
     but asks for network/remote/deploy). Returns None to proceed, or an
@@ -142,11 +151,13 @@ def _gate(hc: HarnessContext, capability: Capability | None, tool: str, command:
             f"'{action.value}' needs approval, but this call has no task_id (start a "
             "task so approvals can be tracked)."
         )
-    granted = store.grantable_approval(hc.task_id, action.value)
+    request = detail if detail is not None else (command or "")
+    rhash = _request_hash(hc.task_id, tool, action.value, request)
+    granted = store.grantable_approval(hc.task_id, action.value, rhash)
     if granted:
         store.consume_approval(granted["id"])
         return None
-    aid = store.add_approval(hc.task_id, action.value, f"{tool}: {(command or '')[:120]}")
+    aid = store.add_approval(hc.task_id, action.value, f"{tool}: {request[:120]}", rhash)
     return (
         f"⏸ APPROVAL REQUIRED — '{action.value}' is not auto-allowed in "
         f"'{hc.policy.mode}' mode.\nThe operator must approve on the machine:\n"
@@ -174,7 +185,13 @@ async def _call(hc: HarnessContext, capability: Capability | None, fn, *args) ->
                     and args and isinstance(args[0], str))
                 else None
             )
-            gate = _gate(hc, capability, fn.__name__, command)
+            # Approval binding detail: the command for shell tools, else the
+            # primary (usually path) argument — so an approval covers exactly
+            # this request, not the whole action class.
+            detail = command
+            if detail is None and args and isinstance(args[0], str):
+                detail = args[0]
+            gate = _gate(hc, capability, fn.__name__, command, detail=detail or "")
             if gate is not None:
                 return _finalize(hc, gate)
         if hooks is None:
@@ -196,7 +213,7 @@ async def _call_idem(hc: HarnessContext, capability: Capability, operation_id: s
     store = getattr(hc, "store", None)
     tid = getattr(hc, "task_id", None)
     if operation_id and store is not None and tid:
-        prev = store.get_operation(operation_id)
+        prev = store.get_operation(operation_id, tid, fn.__name__)
         if prev is not None:
             return _finalize(hc, prev["result"] + "\n[idempotent: cached result for this operation_id]")
     result = await _call(hc, capability, fn, *args)

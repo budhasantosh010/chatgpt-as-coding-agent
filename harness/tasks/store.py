@@ -27,6 +27,18 @@ _MIGRATIONS: list[tuple[int, list[str]]] = [
         "CREATE INDEX idx_tasks_project ON tasks(project_id)",
         "CREATE INDEX idx_events_task ON events(task_id)",
     ]),
+    # v2 (audit S3+S4): approvals bind to the EXACT request (hash over
+    # task/tool/action/normalized args), and operations are keyed per
+    # (task, tool, op_id) so a cached result can never leak across tasks/tools.
+    (2, [
+        "ALTER TABLE approvals ADD COLUMN request_hash TEXT",
+        "CREATE TABLE operations_v2 (op_id TEXT, task_id TEXT, tool TEXT, created TEXT, result TEXT, "
+        "PRIMARY KEY (task_id, tool, op_id))",
+        "INSERT INTO operations_v2 (op_id, task_id, tool, created, result) "
+        "SELECT op_id, task_id, tool, created, result FROM operations",
+        "DROP TABLE operations",
+        "ALTER TABLE operations_v2 RENAME TO operations",
+    ]),
 ]
 
 
@@ -156,12 +168,13 @@ class TaskStore:
 
     # ---- approvals ---------------------------------------------------------
 
-    def add_approval(self, task_id: str, action: str, detail: str) -> str:
+    def add_approval(self, task_id: str, action: str, detail: str, request_hash: str = "") -> str:
         aid = _sid("A")
         with self._lock:
             self._db.execute(
-                "INSERT INTO approvals (id, task_id, action, detail, status, created, decided) VALUES (?,?,?,?,?,?,?)",
-                (aid, task_id, action, detail, "pending", _now_iso(), None),
+                "INSERT INTO approvals (id, task_id, action, detail, status, created, decided, request_hash) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (aid, task_id, action, detail, "pending", _now_iso(), None, request_hash),
             )
             self._db.commit()
         return aid
@@ -180,13 +193,15 @@ class TaskStore:
             self._db.commit()
             return cur.rowcount > 0
 
-    def grantable_approval(self, task_id: str, action: str) -> dict | None:
-        """An approved-but-unused approval matching this task+action (one-shot)."""
+    def grantable_approval(self, task_id: str, action: str, request_hash: str = "") -> dict | None:
+        """An approved-but-unused approval matching this EXACT request (one-shot).
+        Bound to the request hash, not just the action class — approving
+        `pip install X` must not authorize `pip install Y`."""
         with self._lock:
             r = self._db.execute(
-                "SELECT * FROM approvals WHERE task_id=? AND action=? AND status='approved' "
-                "ORDER BY created LIMIT 1",
-                (task_id, action),
+                "SELECT * FROM approvals WHERE task_id=? AND action=? AND request_hash=? "
+                "AND status='approved' ORDER BY created LIMIT 1",
+                (task_id, action, request_hash),
             ).fetchone()
             return dict(r) if r else None
 
@@ -209,9 +224,14 @@ class TaskStore:
 
     # ---- operations (idempotency) -----------------------------------------
 
-    def get_operation(self, op_id: str) -> dict | None:
+    def get_operation(self, op_id: str, task_id: str, tool: str) -> dict | None:
+        """Scoped to (task, tool): task B reusing task A's operation_id must
+        re-execute, never receive A's cached result."""
         with self._lock:
-            r = self._db.execute("SELECT * FROM operations WHERE op_id=?", (op_id,)).fetchone()
+            r = self._db.execute(
+                "SELECT * FROM operations WHERE op_id=? AND task_id=? AND tool=?",
+                (op_id, task_id, tool),
+            ).fetchone()
             return dict(r) if r else None
 
     def record_operation(self, op_id: str, task_id: str, tool: str, result: str) -> None:

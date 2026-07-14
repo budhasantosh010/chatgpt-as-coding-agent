@@ -72,6 +72,42 @@ def test_build_ask_requires_then_grants_approval(tmp_path):
     assert "APPROVAL REQUIRED" in out3
 
 
+def test_approval_bound_to_exact_command(tmp_path):
+    """Audit S3 exploit: approving `pip install X` must NOT authorize
+    `pip install Y` — the approval binds to the exact request."""
+    server, tid, ws = _server_task(tmp_path, "auto_workspace")
+    hc = server.context_for(tid, "default")
+
+    ask = run(_call(hc, Capability.EXECUTE, shell.run_command, "pip install safe-package", None, 30))
+    assert "APPROVAL REQUIRED" in ask
+    pending = server.tasks.pending_approvals(tid)
+    assert server.tasks.decide_approval(pending[0]["id"], "approved")
+
+    # A DIFFERENT package install re-asks instead of consuming the approval.
+    other = run(_call(hc, Capability.EXECUTE, shell.run_command, "pip install different-package", None, 30))
+    assert "APPROVAL REQUIRED" in other
+
+    # The exact approved command is still grantable afterwards.
+    from harness.server import _request_hash
+    rhash = _request_hash(tid, "run_command", "package_install", "pip install safe-package")
+    assert server.tasks.grantable_approval(tid, "package_install", rhash) is not None
+
+
+def test_approval_not_transferable_across_tasks(tmp_path):
+    server, tid_a, ws = _server_task(tmp_path, "auto_workspace")
+    tid_b = next(t for t in tt.start_task(server, str(ws), "g2", "auto_workspace").split() if t.startswith("T-"))
+    hc_a = server.context_for(tid_a, "a")
+    hc_b = server.context_for(tid_b, "b")
+
+    run(_call(hc_a, Capability.EXECUTE, shell.run_command, "git push origin main", None, 30))
+    pending = server.tasks.pending_approvals(tid_a)
+    server.tasks.decide_approval(pending[0]["id"], "approved")
+
+    # Task B issuing the same command still asks — approvals are per task.
+    out_b = run(_call(hc_b, Capability.EXECUTE, shell.run_command, "git push origin main", None, 30))
+    assert "APPROVAL REQUIRED" in out_b
+
+
 def test_auto_workspace_allows_local_but_asks_remote(tmp_path):
     server, tid, ws = _server_task(tmp_path, "auto_workspace")
     hc = server.context_for(tid, "default")

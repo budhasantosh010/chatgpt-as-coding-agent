@@ -83,7 +83,39 @@ def test_migrations_are_idempotent(tmp_path):
     TaskStore(db).close()
     s2 = TaskStore(db)  # reopening must not re-run migrations or error
     row = s2._db.execute("SELECT MAX(version) AS v FROM schema_version").fetchone()
-    assert row["v"] == 1
+    assert row["v"] == 2
+    s2.close()
+
+
+def test_migration_v2_preserves_v1_rows(tmp_path):
+    """Upgrading a v1 database keeps existing approvals and operations."""
+    from harness.tasks.store import _MIGRATIONS
+    import sqlite3
+
+    db = tmp_path / "tasks.db"
+    con = sqlite3.connect(str(db))
+    con.execute("CREATE TABLE schema_version (version INTEGER NOT NULL)")
+    for stmt in dict(_MIGRATIONS)[1]:
+        con.execute(stmt)
+    con.execute("INSERT INTO schema_version (version) VALUES (1)")
+    con.execute(
+        "INSERT INTO approvals (id, task_id, action, detail, status, created, decided) "
+        "VALUES ('A-1','T-1','network','curl x','pending','2026-01-01',NULL)"
+    )
+    con.execute(
+        "INSERT INTO operations (op_id, task_id, tool, created, result) "
+        "VALUES ('op-1','T-1','run_command','2026-01-01','exit 0')"
+    )
+    con.commit()
+    con.close()
+
+    s = TaskStore(db)
+    try:
+        assert s.get_operation("op-1", "T-1", "run_command")["result"] == "exit 0"
+        row = s._db.execute("SELECT request_hash FROM approvals WHERE id='A-1'").fetchone()
+        assert row is not None  # column added, row preserved
+    finally:
+        s.close()
 
 
 def test_idempotent_operations(tmp_path):
@@ -92,4 +124,4 @@ def test_idempotent_operations(tmp_path):
     t = s.create_task(pid, "/repo/proj")
     s.record_operation("op-1", t.id, "run_command", "exit 0")
     s.record_operation("op-1", t.id, "run_command", "DIFFERENT")  # ignored
-    assert s.get_operation("op-1")["result"] == "exit 0"
+    assert s.get_operation("op-1", t.id, "run_command")["result"] == "exit 0"
