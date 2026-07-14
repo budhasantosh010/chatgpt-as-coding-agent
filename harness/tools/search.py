@@ -10,6 +10,7 @@ import anyio
 
 from ..context import HarnessContext
 from ..proc import run_subprocess
+from ..security import is_secret_path
 
 # Heavy/noise directories that pollute results and waste context. Skipped by
 # glob so ChatGPT never descends into node_modules & friends. (grep already
@@ -63,11 +64,18 @@ async def grep(
     base_str = path if path is not None else str(hc.require_workspace())
     base = hc.resolve_read(base_str)
 
+    secret_globs = hc.config.secret_globs
+
     rg = shutil.which("rg")
     if rg is None:
-        return await anyio.to_thread.run_sync(_grep_python, base, pattern, ignore_case, limit)
+        return await anyio.to_thread.run_sync(
+            _grep_python, base, pattern, ignore_case, limit, secret_globs
+        )
 
     args = [rg, "--line-number", "--no-heading", "--color", "never"]
+    # Exclude secret files from the search so their contents can't be surfaced.
+    for pat in secret_globs:
+        args += ["--glob", f"!{pat}"]
     if ignore_case:
         args.append("--ignore-case")
     if glob:
@@ -95,7 +103,7 @@ async def grep(
     return body + more
 
 
-def _grep_python(base: Path, pattern: str, ignore_case: bool, limit: int) -> str:
+def _grep_python(base: Path, pattern: str, ignore_case: bool, limit: int, secret_globs) -> str:
     flags = re.IGNORECASE if ignore_case else 0
     try:
         rx = re.compile(pattern, flags)
@@ -104,6 +112,10 @@ def _grep_python(base: Path, pattern: str, ignore_case: bool, limit: int) -> str
     hits: list[str] = []
     for file in base.rglob("*"):
         if not file.is_file():
+            continue
+        # Never open secret files or descend into noise dirs (ripgrep skips these
+        # for us; the pure-Python fallback must enforce it explicitly).
+        if _is_noise(file, base) or is_secret_path(file, secret_globs):
             continue
         try:
             with file.open("r", encoding="utf-8", errors="ignore") as fh:

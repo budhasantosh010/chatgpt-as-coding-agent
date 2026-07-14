@@ -15,9 +15,24 @@ from .config import Config
 from .context import HarnessContext, HarnessServer
 from .hooks import ToolCall
 from .policy import Capability
+from .scrub import scrub_text
 from .security import SecurityError
 from .tools import files, git, memory, process, search, shell, skills, workspace, worktree
 from .tools import todos as todos_tool
+
+# Single source of truth for which capability each tool needs. Tools that change
+# state (checkpoints write a git ref; memory/todos write JSON) are mutations, not
+# reads, so read_only must deny them. Anything absent defaults to READ.
+_TOOL_CAPS: dict[str, Capability] = {
+    "create_checkpoint": Capability.WRITE,
+    "remember": Capability.WRITE,
+    "forget": Capability.WRITE,
+    "write_todos": Capability.WRITE,
+}
+
+
+def capability_for(tool: str) -> Capability:
+    return _TOOL_CAPS.get(tool, Capability.READ)
 
 _EXPECTED_ERRORS = (
     SecurityError,
@@ -64,11 +79,25 @@ def _session_key(ctx: Context | None) -> str:
     return "default"
 
 
+def _finalize(hc: HarnessContext, text: str) -> str:
+    """Last gate every string passes through before leaving the process. Scrubs
+    known secret formats even on the error path (the success path also scrubs via
+    the post-hook; this guarantees errors are never an exfiltration hole)."""
+    cfg = getattr(hc, "config", None)
+    if cfg is not None and getattr(cfg, "scrub_output", False):
+        scrubbed, n = scrub_text(text)
+        if n:
+            return f"{scrubbed}\n[harness: redacted {n} secret(s) from this output]"
+    return text
+
+
 async def _call(hc: HarnessContext, capability: Capability | None, fn, *args) -> str:
     """Enforce the capability, run lifecycle hooks around the pure tool, and
     normalize expected errors. The tool name is ``fn.__name__`` and the session
     key is ``hc.key`` — so hooks (audit, scrub, future policies) attach here
-    without any change to the 30 individual wrappers below."""
+    without any change to the 30 individual wrappers below. Every return path,
+    including normalized errors, goes through ``_finalize`` so nothing bypasses
+    scrubbing."""
     hooks = getattr(hc, "hooks", None)
     try:
         if capability is not None:
@@ -81,7 +110,7 @@ async def _call(hc: HarnessContext, capability: Capability | None, fn, *args) ->
         call.result = result if isinstance(result, str) else str(result)
         return await hooks.run_post(call)
     except _EXPECTED_ERRORS as exc:
-        return f"Error: {exc}"
+        return _finalize(hc, f"Error: {exc}")
 
 
 def build_mcp(config: Config, server: HarnessServer) -> FastMCP:
@@ -206,7 +235,7 @@ def build_mcp(config: Config, server: HarnessServer) -> FastMCP:
         private (stored in a git ref; does not touch your branch, history, or
         staging). Call before a risky batch of edits."""
         hc = server.session_for(_session_key(ctx))
-        return await _call(hc, Capability.READ, git.create_checkpoint, label)
+        return await _call(hc, capability_for("create_checkpoint"), git.create_checkpoint, label)
 
     @mcp.tool()
     async def list_checkpoints(ctx: Context = None) -> str:
@@ -251,7 +280,7 @@ def build_mcp(config: Config, server: HarnessServer) -> FastMCP:
         gotcha, or convention you discovered). Pass a stable key to update an
         existing note instead of adding a new one."""
         hc = server.session_for(_session_key(ctx))
-        return await _call(hc, Capability.READ, memory.remember, text, key)
+        return await _call(hc, capability_for("remember"), memory.remember, text, key)
 
     @mcp.tool()
     async def recall(query: str | None = None, ctx: Context = None) -> str:
@@ -264,7 +293,7 @@ def build_mcp(config: Config, server: HarnessServer) -> FastMCP:
     async def forget(key: str, ctx: Context = None) -> str:
         """Delete a remembered fact by its id (shown in recall)."""
         hc = server.session_for(_session_key(ctx))
-        return await _call(hc, Capability.READ, memory.forget, key)
+        return await _call(hc, capability_for("forget"), memory.forget, key)
 
     # ---- skills (READ — loadable capability docs) --------------------------
 
@@ -326,7 +355,7 @@ def build_mcp(config: Config, server: HarnessServer) -> FastMCP:
         Replaces the current list. Use for any multi-step task so it survives
         turn resets."""
         hc = server.session_for(_session_key(ctx))
-        return await _call(hc, Capability.READ, todos_tool.write_todos, todos)
+        return await _call(hc, capability_for("write_todos"), todos_tool.write_todos, todos)
 
     @mcp.tool()
     async def list_todos(ctx: Context = None) -> str:

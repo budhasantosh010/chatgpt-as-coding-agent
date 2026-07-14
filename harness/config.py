@@ -22,6 +22,13 @@ DEFAULT_SECRET_GLOBS: tuple[str, ...] = (
     "*.pem", "*.key", "*.ppk", "*.p12", "*.pfx", "*.keystore", "*.jks",
     ".git-credentials", ".npmrc", ".pypirc", ".netrc", "credentials",
     "*.kdbx", "id_dsa", "*.gpg", "secring.*",
+    ".env", ".env.*",  # dotenv files hold live secrets (…but see SECRET_EXCEPTIONS)
+)
+
+# Filenames that LOOK like secret files by glob but are safe by convention
+# (templates/examples that ship placeholder values). Suffix match, case-insensitive.
+SECRET_EXCEPTION_SUFFIXES: tuple[str, ...] = (
+    ".example", ".sample", ".template", ".dist", ".tmpl",
 )
 
 
@@ -110,6 +117,9 @@ class Config:
     sandbox: str = "local"
     sandbox_image: str = "python:3.12-slim"
     sandbox_network: str = "none"
+    # Extra env var names a command may see, on top of the safe base set. Anything
+    # not listed (cloud creds, tokens) is withheld so `run_command` can't print it.
+    env_allowlist: list[str] = field(default_factory=list)
 
     # ---- derived / validated ------------------------------------------------
 
@@ -188,6 +198,7 @@ class Config:
             sandbox_image=_env("SANDBOX_IMAGE", "python:3.12-slim"),
             sandbox_network=_env("SANDBOX_NETWORK", "none"),
         )
+        env_allow_raw = _env("ENV_ALLOWLIST")
         state_dir = _env("STATE_DIR")
         if state_dir:
             kwargs["state_dir"] = Path(state_dir).expanduser()
@@ -201,6 +212,8 @@ class Config:
         cfg = cls(**kwargs)
         if globs_raw:
             cfg.secret_globs = list(DEFAULT_SECRET_GLOBS) + _split_list(globs_raw, sep=",")
+        if env_allow_raw:
+            cfg.env_allowlist = _split_list(env_allow_raw, sep=",")
         return cfg
 
     def redacted(self) -> dict:

@@ -69,9 +69,19 @@ def resolve_in_roots(
     )
 
 
+_SECRET_EXCEPTION_SUFFIXES = (".example", ".sample", ".template", ".dist", ".tmpl")
+
+
 def is_secret_path(path: Path, globs: list[str]) -> bool:
-    """True if any path component or the full path matches a secret glob."""
+    """True if any path component or the full path matches a secret glob.
+
+    Placeholder files (``.env.example`` and friends) are explicitly exempted so
+    they can be read/searched — they ship no real secrets.
+    """
     name = path.name
+    lower = name.lower()
+    if any(lower.endswith(sfx) for sfx in _SECRET_EXCEPTION_SUFFIXES):
+        return False
     parts = path.parts
     full = str(path).replace("\\", "/")
     for pattern in globs:
@@ -101,6 +111,13 @@ def assert_writable(path: Path, globs: list[str]) -> None:
     if is_secret_path(path, globs):
         raise SecurityError(
             f"Refusing to write {path.name}: it matches a secret/credential pattern."
+        )
+    # The repo's own git internals must never be written directly — a crafted
+    # hook/config there would run on the host outside every guard.
+    if ".git" in path.parts:
+        raise SecurityError(
+            "Refusing to write inside a .git directory. Use git commands, not "
+            "direct file writes, to change repository state."
         )
 
 

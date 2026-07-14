@@ -46,8 +46,17 @@ async def run_subprocess(
     timeout: int = 120,
     encoding: str = "utf-8",
     env: dict[str, str] | None = None,
+    inherit_env: bool = True,
 ) -> ProcessResult:
-    full_env = {**os.environ, **env} if env else None
+    # inherit_env=True (default): merge env over the full host environment.
+    # inherit_env=False: env is the COMPLETE environment (used by executors that
+    # deliberately restrict what a command can see, e.g. the local sandbox).
+    if env is not None and not inherit_env:
+        full_env = env
+    elif env:
+        full_env = {**os.environ, **env}
+    else:
+        full_env = None
     try:
         proc = await asyncio.create_subprocess_exec(
             *argv,
