@@ -42,15 +42,26 @@ async def git(
     *args: str,
     env: dict | None = None,
     timeout: int = 60,
-    hardened: bool = True,
+    hardened: bool | str = True,
 ) -> ProcessResult:
-    """Run git through the session executor. hardened=True (default) neutralizes
-    repo hooks + ignores system/global config — correct for the harness's own
-    plumbing (checkpoints/worktrees/inspection) against possibly-untrusted repos.
-    hardened=False honors the user's git config, identity, and hooks — needed for
-    explicit user-intended actions like a real commit."""
-    if hardened:
+    """Run git through the session executor, at one of three hardening levels:
+
+    * ``True`` (default) — repo hooks neutralized AND system/global config
+      ignored. For the harness's own plumbing (checkpoints/worktrees/inspection)
+      against possibly-untrusted repos.
+    * ``"no_hooks"`` — the user's global config applies (so identity/signing
+      work) but REPO HOOKS STAY OFF. The default for git_commit: a cloned repo's
+      pre-commit hook must not execute code on the host just because the model
+      committed. Opt back into hooks with HARNESS_COMMIT_HOOKS=true.
+    * ``False`` — everything honored, including repo hooks. Operator opt-in only.
+    """
+    if hardened is True:
         merged = dict(_HARDEN_ENV)
+        if env:
+            merged.update(env)
+        argv = ["git", "-c", f"core.hooksPath={os.devnull}", "-C", str(base), *args]
+    elif hardened == "no_hooks":
+        merged = {"GIT_TERMINAL_PROMPT": "0"}
         if env:
             merged.update(env)
         argv = ["git", "-c", f"core.hooksPath={os.devnull}", "-C", str(base), *args]

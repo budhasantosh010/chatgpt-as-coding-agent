@@ -125,6 +125,9 @@ class Config:
     # restore point even if the model forgets to checkpoint.
     auto_checkpoint: bool = True
     auto_checkpoint_interval: int = 60
+    # Let git_commit run the repo's own hooks (pre-commit etc.). Off by default:
+    # repo hooks are repo-controlled code executing on the host.
+    commit_hooks: bool = False
     # Execution backend for run_command: "local" (host shell) or "docker" (sandbox).
     sandbox: str = "local"
     sandbox_image: str = "python:3.12-slim"
@@ -223,6 +226,7 @@ class Config:
             audit_log=_env_bool("AUDIT_LOG", True),
             auto_checkpoint=_env_bool("AUTO_CHECKPOINT", True),
             auto_checkpoint_interval=_env_int("AUTO_CHECKPOINT_INTERVAL", 60),
+            commit_hooks=_env_bool("COMMIT_HOOKS", False),
             sandbox=_env("SANDBOX", "local"),
             sandbox_image=_env("SANDBOX_IMAGE", "python:3.12-slim"),
             sandbox_network=_env("SANDBOX_NETWORK", "none"),

@@ -167,6 +167,16 @@ class HarnessServer:
         task = self.tasks.get_task(task_id)
         if task is None:
             raise SecurityError(f"Unknown task_id {task_id!r}. Use start_task or list_tasks.")
+        # Terminal tasks are frozen: a completed/cancelled/failed task must not
+        # keep mutating the workspace. (task_status / resume_task stay readable —
+        # they are server-scoped and don't come through here.)
+        from .tasks.model import _TERMINAL
+
+        if task.status in _TERMINAL:
+            raise SecurityError(
+                f"Task {task_id} is {task.status.value} and read-only. Start a new "
+                "task (start_task) to continue working, or resume a non-terminal one."
+            )
         ctx.task_id = task_id
         # The ceiling is enforced HERE, not just in start_task, so it is
         # authoritative over legacy task rows, direct DB edits, and subtask

@@ -1,8 +1,9 @@
 """Guarded version-control actions: git_commit (local) + open_pr (remote, via gh).
 
-Unlike the harness's checkpoint plumbing (which runs git hardened — hooks off,
-config ignored), a real commit must honor the user's git identity, config, and
-pre-commit hooks, so it runs gitcmd with hardened=False.
+A real commit honors the user's git identity and config — but NOT the repo's
+own hooks by default (hardened="no_hooks"): a cloned repo's pre-commit hook
+must not execute code on the host just because the model committed. Operators
+who want their hooks to run set HARNESS_COMMIT_HOOKS=true.
 """
 
 from __future__ import annotations
@@ -11,8 +12,12 @@ from ..context import HarnessContext
 from . import gitcmd
 
 
+def _commit_hardening(hc: HarnessContext):
+    return False if getattr(hc.config, "commit_hooks", False) else "no_hooks"
+
+
 async def _repo_root(hc: HarnessContext, ws):
-    r = await gitcmd.git(hc, ws, "rev-parse", "--show-toplevel", hardened=False)
+    r = await gitcmd.git(hc, ws, "rev-parse", "--show-toplevel", hardened="no_hooks")
     if r.returncode != 0 or not r.stdout.strip():
         return None
     from pathlib import Path
@@ -26,11 +31,12 @@ async def git_commit(hc: HarnessContext, message: str, add_all: bool = True) -> 
     root = await _repo_root(hc, ws)
     if root is None:
         return "Not a git repository. Run: git init"
+    level = _commit_hardening(hc)
     if add_all:
-        add = await gitcmd.git(hc, root, "add", "-A", hardened=False)
+        add = await gitcmd.git(hc, root, "add", "-A", hardened=level)
         if add.returncode != 0:
             return f"Error staging: {add.stderr.strip()}"
-    r = await gitcmd.git(hc, root, "commit", "-m", message, hardened=False)
+    r = await gitcmd.git(hc, root, "commit", "-m", message, hardened=level)
     out = (r.stdout + "\n" + r.stderr).strip()
     if r.returncode != 0:
         if "nothing to commit" in out.lower():

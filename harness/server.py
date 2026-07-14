@@ -205,6 +205,22 @@ async def _call(hc: HarnessContext, capability: Capability | None, fn, *args) ->
         return _finalize(hc, f"Error: {exc}")
 
 
+async def _pre(hc: HarnessContext, capability: Capability, tool_name: str,
+               detail: str = "") -> str | None:
+    """The gate + pre-hook half of _call, for tools whose return type isn't a
+    string (read_image). Raises on DENY/veto; returns an approval message or
+    None to proceed. Keeps such tools inside the same audit/permission path."""
+    gate = _gate(hc, capability, tool_name, None, detail=detail)
+    if gate is not None:
+        return gate
+    hooks = getattr(hc, "hooks", None)
+    if hooks is not None:
+        call = ToolCall(tool=tool_name, capability=capability, session_key=hc.key,
+                        args=(detail,), context=hc)
+        await hooks.run_pre(call)  # may raise HookVeto
+    return None
+
+
 async def _call_idem(hc: HarnessContext, capability: Capability, operation_id: str | None, fn, *args) -> str:
     """Like _call, but idempotent for side-effectful tools: if this operation_id
     already ran, return the recorded result instead of executing again. Guards
@@ -351,6 +367,11 @@ def build_mcp(config: Config, server: HarnessServer) -> FastMCP:
         """Read an image file (png/jpg/gif/webp/bmp) so you can SEE it — a
         screenshot, diagram, or UI mockup. Path is confinement + secret gated."""
         hc = server.context_for(task_id, _session_key(ctx))
+        # Non-string return type, so it can't ride _call — but it still passes
+        # the same permission gate and pre-hooks (audit) as every other tool.
+        gate = await _pre(hc, Capability.READ, "read_image", detail=path)
+        if gate is not None:
+            raise SecurityError(gate)
         data, fmt = images.read_image_bytes(hc, path)
         return Image(data=data, format=fmt)
 
