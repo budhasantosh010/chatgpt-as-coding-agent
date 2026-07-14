@@ -200,6 +200,51 @@ async def apply_edits(hc: HarnessContext, edits: list) -> str:
     return f"Applied {len(results)} operation(s) atomically:\n" + "\n".join(f"  {r}" for r in results)
 
 
+def _patch_targets(patch: str) -> list[str]:
+    """Target paths a unified diff would write (from '+++ b/...' headers)."""
+    targets: list[str] = []
+    for line in patch.splitlines():
+        if line.startswith("+++ "):
+            p = line[4:].strip()
+            if p in ("/dev/null", ""):
+                continue
+            if p.startswith(("a/", "b/")):
+                p = p[2:]
+            targets.append(p)
+    return targets
+
+
+async def apply_patch(hc: HarnessContext, patch: str) -> str:
+    """Apply a unified diff to the workspace via `git apply` (robust context
+    matching). Every target path is checked against the workspace confinement +
+    secret + .git guards BEFORE applying, so a crafted patch can't escape."""
+    import secrets as _secrets
+
+    from . import gitcmd
+
+    ws = hc.require_workspace()
+    if not patch or not patch.strip():
+        raise ValueError("Empty patch.")
+    targets = _patch_targets(patch)
+    if not targets:
+        raise ValueError("No target files found in patch (need unified diff '+++ b/...' headers).")
+    for t in targets:
+        hc.resolve_write(t)  # raises SecurityError if outside root / secret / .git
+
+    tmp = hc.config.state_dir / "tmp"
+    tmp.mkdir(parents=True, exist_ok=True)
+    patch_file = tmp / f"patch-{_secrets.token_hex(6)}.diff"
+    patch_file.write_text(patch if patch.endswith("\n") else patch + "\n", encoding="utf-8")
+    try:
+        result = await gitcmd.git(hc, ws, "apply", "--whitespace=nowarn", str(patch_file))
+    finally:
+        patch_file.unlink(missing_ok=True)
+    if result.returncode != 0:
+        return f"Error applying patch: {result.stderr.strip() or result.stdout.strip()}"
+    hc.log("apply_patch", files=len(targets))
+    return f"Applied patch to {len(targets)} file(s): {', '.join(targets)}"
+
+
 async def list_dir(hc: HarnessContext, path: str | None = None, limit: int = 400) -> str:
     target = path if path is not None else str(hc.require_workspace())
     real = hc.resolve_read(target)

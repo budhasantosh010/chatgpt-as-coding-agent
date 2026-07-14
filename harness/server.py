@@ -18,7 +18,7 @@ from .permissions import action_for, decide as decide_action
 from .policy import Capability, Decision
 from .scrub import scrub_text
 from .security import SecurityError
-from .tools import files, git, memory, process, search, shell, skills, workspace, worktree
+from .tools import diagnostics, files, git, memory, process, repomap, search, shell, skills, workspace, worktree
 from .tools import todos as todos_tool
 from .tasks import tools as tasktools
 
@@ -293,6 +293,30 @@ def build_mcp(config: Config, server: HarnessServer) -> FastMCP:
         running it again)."""
         hc = server.context_for(task_id, _session_key(ctx))
         return await _call_idem(hc, Capability.EXECUTE, operation_id, shell.run_command, command, cwd, timeout)
+
+    @mcp.tool()
+    async def apply_patch(patch: str, operation_id: str | None = None, task_id: str | None = None, ctx: Context = None) -> str:
+        """Apply a unified diff to the workspace (via git apply). Each target path
+        is confinement/secret/.git-checked before applying. Good for large or
+        multi-hunk changes expressed as a standard diff."""
+        hc = server.context_for(task_id, _session_key(ctx))
+        return await _call_idem(hc, Capability.WRITE, operation_id, files.apply_patch, patch)
+
+    # ---- code intelligence (READ) ------------------------------------------
+
+    @mcp.tool()
+    async def diagnostics_check(path: str | None = None, task_id: str | None = None, ctx: Context = None) -> str:
+        """Run the project's detected linter/typechecker (ruff/tsc/eslint/cargo/
+        go vet) and return errors. Call after edits to stop editing blind."""
+        hc = server.context_for(task_id, _session_key(ctx))
+        return await _call(hc, Capability.READ, diagnostics.diagnostics, path)
+
+    @mcp.tool()
+    async def repo_map(path: str | None = None, task_id: str | None = None, ctx: Context = None) -> str:
+        """Compact symbol map (functions/classes per file) to locate code fast
+        without reading everything."""
+        hc = server.context_for(task_id, _session_key(ctx))
+        return await _call(hc, Capability.READ, repomap.repo_map, path)
 
     # ---- review + safety net (git) -----------------------------------------
 
