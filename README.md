@@ -55,10 +55,16 @@ state dir, so the URL stays stable across restarts.
 
 **Other MCP clients (Claude Desktop, IDE extensions):** run
 `python -m harness stdio` and point the client at it as a stdio MCP server — the
-same 29 tools, no Tailscale or secret route needed (the process boundary is the
+same 51 tools, no Tailscale or secret route needed (the process boundary is the
 trust boundary).
 
-## The tools ChatGPT sees (29)
+## The tools ChatGPT sees (51)
+
+**Tasks (the isolation handle)** — `start_task(project, goal, permission_mode)`
+returns a `task_id` you thread through every call so concurrent conversations
+stay isolated; `list_tasks`, `task_status`, `resume_task`, `set_task_goal`,
+`set_acceptance_criteria`, `advance_task`, `finish_task`, `cancel_task`,
+`create_subtask`, `register_project`.
 
 **Orient** — `open_workspace(path)` (call first: git state, structure, project
 rules, suggested test/build commands, remembered facts), `session_status()`
@@ -170,17 +176,18 @@ todos, batch multi-file patch (in-process rollback), lifecycle hooks,
 secret-content scrubbing on every return path, env allowlist, unified execution
 boundary (git hooks/filters neutralized), optional Docker sandbox, stdio transport.
 
-**Known gap:** over the stateless HTTP transport all ChatGPT conversations share
-one session — concurrent conversations are not isolated yet. Use one at a time.
-Fixed by the explicit `task_id` handle in the Codex-task phase.
+**Isolation:** pass a `task_id` (from `start_task`) to every tool call and
+concurrent conversations are fully isolated (separate workspace, permission mode,
+process owner). Without one, calls share a session and `open_workspace` warns.
 
-**Roadmap:** explicit task identity + task lifecycle (Codex-style), full
-permission modes + approvals, hardened per-project container sandbox, LSP/
-diagnostics, MCP client federation, image/notebook support.
+**Roadmap (deliberately later):** git itself running inside the container (today
+it runs on host with hooks/config neutralized), full Windows process-tree kill,
+richer sandbox backends. Autonomous LLM sub-agents are N/A by design — the harness
+has no model; it offers subtasks instead.
 
 ## Development
 
 ```powershell
-python -m pytest tests -q     # 87 tests: security, policy, tools, checkpoints, sessions, processes, worktrees, hooks, scrub, executor
+python -m pytest tests -q     # 149 tests across security, tasks, permissions/approvals, code-intel, federation, …
 python -m harness doctor      # validate config + environment
 ```

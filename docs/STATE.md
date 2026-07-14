@@ -39,23 +39,32 @@ HarnessContext; each MCP tool is one thin wrapper declaring a capability. Adding
 a tool = one function + one wrapper. Adding a permission mode = edit policy.py
 only. Nothing else changes.
 
-## Status: 29 tools, 100+ tests, verified end-to-end (HTTP + stdio)
+## Status: 51 tools, 149 tests, verified end-to-end (HTTP + stdio). Phases 0–3 complete.
 
-**KNOWN GAP (being fixed in Phase 1):** over the real stateless HTTP transport the
-MCP SDK issues no session id, so all ChatGPT conversations currently share one
-`"default"` context — concurrent conversations are NOT isolated yet. Use one
-conversation at a time until the explicit `task_id` handle lands. Pinned by
-`tests/test_isolation.py` (xfail-strict).
-
-**Done — Tier 0 (foundations):** a per-session context registry (HarnessServer +
-SessionStore). NOTE: isolation is real only when sessions have distinct keys;
-the transport doesn't yet supply them (see KNOWN GAP above).
+**Isolation (fixed):** identity is an explicit `task_id` the model threads through
+tool calls. Two conversations working different tasks get different contexts
+(workspace, permission mode, process owner). `tests/test_isolation.py` proves it.
+Without a task_id, calls fall back to a shared session (open_workspace warns).
 
 **Done — P0 hardening (security/correctness):** error-path scrubbing, run_command
 env allowlist, grep secret-path policy, `.env`/`.git` blocking, capability
 reclassification (read_only is truly read-only), unified execution boundary with
 git hooks/filters neutralized, stale-write guard + auto-checkpoint, atomic state
 writes, memory-id + worktree-collision fixes, per-owner process ownership.
+
+**Done — P1 (Codex task architecture):** SQLite task store + migrations,
+TaskState machine, task_id isolation, task lifecycle tools, tiered memory
+(global/project/task, worktrees share project via git common-dir), enterprise
+permission modes (plan/build_ask/auto_workspace/bypass_sandboxed) + 11 action
+classes + command classifier + one-shot approval channel (`harness approvals`
+CLI), operation_id idempotency, hardened Docker sandbox.
+
+**Done — P2 (coding quality):** diagnostics_check (project checker), repo_map
+(symbol index), apply_patch (unified diff via git apply).
+
+**Done — P3 (extensibility):** MCP client federation (consume other MCP servers),
+read_image (MCP image content), notebook read/edit, create_subtask, git_commit +
+open_pr.
 
 **Done — Tier 1 (parity with Claude Code / Codex):**
 - memory: remember / recall / forget (per-workspace, auto-surfaced on open)
@@ -86,11 +95,16 @@ writes, memory-id + worktree-collision fixes, per-owner process ownership.
   local MCP clients (Claude Desktop, IDE extensions). No middleware needed — the
   process boundary is the trust boundary.
 
-**Roadmap — later (not built):**
-- ASK/approval mode: an out-of-band approval channel so `Decision.ASK` becomes
-  usable (per-tool confirmations) — hooks are the natural home.
+**Roadmap — genuinely later (not built; deliberately):**
+- Real per-project hardened container *images* + host→container path rewriting so
+  git itself runs inside the sandbox (today git runs on host with hooks/config
+  neutralized — the primary RCE vector is closed, filters in an untrusted repo
+  are the residual).
+- Full Windows process-tree kill (killing a PowerShell wrapper can leave a
+  grandchild; documented limitation).
 - richer sandbox backends (gVisor/Firecracker/remote) — a third Executor class.
-- a tool to query the audit log / session events from within ChatGPT.
+- Not applicable by design: autonomous LLM sub-agents (the harness has no model —
+  ChatGPT is the brain; we provide subtasks instead).
 
 ## Key decisions (don't relitigate)
 
@@ -116,7 +130,8 @@ python -m pip install .            # or: pip install -r requirements.txt
 python -m harness doctor           # validate config + environment
 python -m harness serve            # HTTP server on 127.0.0.1:8848 (for ChatGPT)
 python -m harness stdio            # stdio transport (for local MCP clients)
-python -m pytest tests -q          # 87 tests (needs pip install .[dev])
+python -m harness approvals list   # operator approval queue (build_ask/auto_workspace)
+python -m pytest tests -q          # 149 tests (needs pip install .[dev])
 ```
 
 See README.md for the full ChatGPT-connector + Tailscale setup.
