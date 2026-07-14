@@ -1,34 +1,54 @@
-"""The session-isolation gap, pinned as a test.
+"""Session isolation via the explicit task handle.
 
-Over the real stateless HTTP transport the MCP SDK issues no session id, so
-_session_key() returns 'default' for every conversation and they share one
-workspace. This asserts the isolation we WANT; it fails today and is marked
-xfail(strict), so when Phase 1's explicit task_id makes it pass, strict xfail
-flips to a failure and reminds us to delete the marker.
+The Phase-0 gap (all conversations shared the 'default' context) is fixed here:
+identity lives in an explicit task_id, so two conversations working different
+tasks get different contexts — different workspace, policy, and process owner.
 """
 
 from __future__ import annotations
 
-import pytest
-
 from harness.config import Config
 from harness.context import HarnessServer
-from harness.server import _session_key
 
 
-@pytest.mark.xfail(reason="shared-default isolation; fixed by task_id in Phase 1", strict=True)
-def test_two_transport_conversations_are_isolated(tmp_path):
+def _server(tmp_path):
     cfg = Config(workspace_roots=[tmp_path], state_dir=tmp_path / "s", secret_route="r")
-    server = HarnessServer(cfg)
+    return HarnessServer(cfg)
+
+
+def test_two_tasks_are_isolated(tmp_path):
+    server = _server(tmp_path)
     ws_a = tmp_path / "A"; ws_a.mkdir()
     ws_b = tmp_path / "B"; ws_b.mkdir()
+    pid = server.tasks.register_project(str(tmp_path))
+    task_a = server.tasks.create_task(pid, str(ws_a), permission_mode="full")
+    task_b = server.tasks.create_task(pid, str(ws_b), permission_mode="full")
 
-    # Two ChatGPT conversations; the stateless transport gives both no session
-    # header, so _session_key(None) == 'default' for each.
-    convo1 = server.session_for(_session_key(None))
-    convo1.set_workspace(str(ws_a))
-    convo2 = server.session_for(_session_key(None))
-    convo2.set_workspace(str(ws_b))
+    ctx_a = server.context_for(task_a.id, "default")
+    ctx_b = server.context_for(task_b.id, "default")
 
-    # If the two conversations were isolated, convo1 would still see A.
-    assert convo1.active_workspace == ws_a
+    assert str(ctx_a.active_workspace) == str(ws_a)
+    assert str(ctx_b.active_workspace) == str(ws_b)
+    # Re-resolving A after B must still point at A (no cross-contamination).
+    assert str(server.context_for(task_a.id, "default").active_workspace) == str(ws_a)
+    # Process ownership keys differ, so one task can't touch another's processes.
+    assert ctx_a.key != ctx_b.key
+
+
+def test_task_carries_its_permission_mode(tmp_path):
+    server = _server(tmp_path)
+    ws = tmp_path / "P"; ws.mkdir()
+    pid = server.tasks.register_project(str(tmp_path))
+    t = server.tasks.create_task(pid, str(ws), permission_mode="plan")
+    ctx = server.context_for(t.id, "default")
+    assert ctx.policy.mode == "plan"
+
+
+def test_unknown_task_id_is_rejected(tmp_path):
+    from harness.security import SecurityError
+    server = _server(tmp_path)
+    try:
+        server.context_for("T-doesnotexist", "default")
+        assert False, "should have raised"
+    except SecurityError:
+        pass

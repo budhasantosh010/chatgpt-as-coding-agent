@@ -161,8 +161,9 @@ class Config:
         resolved.append(Path(os.path.realpath(str(worktrees_root))))
         self.workspace_roots = resolved
 
-        if self.mode not in ("full", "read_only"):
-            raise ValueError(f"HARNESS_MODE must be 'full' or 'read_only', got {self.mode!r}")
+        _valid_modes = ("full", "read_only", "plan", "build_ask", "auto_workspace", "bypass_sandboxed")
+        if self.mode not in _valid_modes:
+            raise ValueError(f"HARNESS_MODE must be one of {_valid_modes}, got {self.mode!r}")
         if self.sandbox not in ("local", "docker"):
             raise ValueError(f"HARNESS_SANDBOX must be 'local' or 'docker', got {self.sandbox!r}")
 

@@ -38,6 +38,7 @@ class HarnessContext:
                  executor=None, hooks=None):
         self.config = config
         self.key = key
+        self.task_id: str | None = None
         self.policy = PermissionPolicy(config.mode)
         self.active_workspace: Path | None = None
         self.cwd: Path | None = None
@@ -112,10 +113,12 @@ class HarnessServer:
             make_scrub_hook,
         )
         from .processes import ProcessManager
+        from .tasks.store import TaskStore
 
         self.config = config
         self.processes = ProcessManager()
         self.executor = build_executor(config)
+        self.tasks = TaskStore(config.state_dir / "tasks.db")
         self.hooks = HookManager()
         if config.audit_log:
             self.hooks.on_pre(make_audit_hook(config.state_dir / "audit.jsonl"))
@@ -134,6 +137,34 @@ class HarnessServer:
                 executor=self.executor, hooks=self.hooks,
             )
             self._sessions[key] = ctx
+        return ctx
+
+    def context_for(self, task_id: str | None, session_key: str) -> HarnessContext:
+        """Resolve the context a tool call runs in. With an explicit task_id the
+        context is bound to that task (its workspace + permission mode) and keyed
+        by the task — so two conversations with different tasks are isolated. This
+        is the fix for the shared-'default' collision. Without a task_id, fall
+        back to the per-connection session (the legacy, non-isolated path)."""
+        if not task_id:
+            return self.session_for(session_key)
+        key = f"task:{task_id}"
+        ctx = self._sessions.get(key)
+        if ctx is None:
+            ctx = HarnessContext(
+                self.config, key=key, processes=self.processes,
+                executor=self.executor, hooks=self.hooks,
+            )
+            self._sessions[key] = ctx
+        # (Re)bind to the task's current workspace + permission mode each call, so
+        # a resumed task restores its state even after a restart.
+        task = self.tasks.get_task(task_id)
+        if task is None:
+            raise SecurityError(f"Unknown task_id {task_id!r}. Use start_task or list_tasks.")
+        ctx.task_id = task_id
+        ctx.policy = PermissionPolicy(task.permission_mode)
+        active = task.worktree_path or task.workspace_path
+        if str(getattr(ctx, "active_workspace", "")) != str(active):
+            ctx.set_workspace(str(active))
         return ctx
 
     @property

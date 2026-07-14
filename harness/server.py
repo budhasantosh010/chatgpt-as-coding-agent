@@ -132,39 +132,39 @@ def build_mcp(config: Config, server: HarnessServer) -> FastMCP:
     # ---- orientation (READ) ------------------------------------------------
 
     @mcp.tool()
-    async def open_workspace(path: str, ctx: Context = None) -> str:
+    async def open_workspace(path: str, task_id: str | None = None, ctx: Context = None) -> str:
         """Open a project directory as the active workspace and return orientation:
         git branch/status/recent commits, detected project type, top-level
         structure, and any AGENTS.md / CLAUDE.md rules. Call this first. The path
         must be inside an approved workspace root."""
-        hc = server.session_for(_session_key(ctx))
+        hc = server.context_for(task_id, _session_key(ctx))
         return await _call(hc, Capability.READ, workspace.open_workspace, path)
 
     @mcp.tool()
-    async def session_status(ctx: Context = None) -> str:
+    async def session_status(task_id: str | None = None, ctx: Context = None) -> str:
         """Show the current workspace's git changes and the recent actions taken
         in this session. Use it to resume a task after a turn ends."""
-        hc = server.session_for(_session_key(ctx))
+        hc = server.context_for(task_id, _session_key(ctx))
         return await _call(hc, Capability.READ, workspace.session_status)
 
     @mcp.tool()
-    async def read_file(path: str, offset: int | None = None, limit: int | None = None, ctx: Context = None) -> str:
+    async def read_file(path: str, offset: int | None = None, limit: int | None = None, task_id: str | None = None, ctx: Context = None) -> str:
         """Read a text file. offset (1-based start line) and limit (line count)
         page through large files. Binary files are not returned."""
-        hc = server.session_for(_session_key(ctx))
+        hc = server.context_for(task_id, _session_key(ctx))
         return await _call(hc, Capability.READ, files.read_file, path, offset, limit)
 
     @mcp.tool()
-    async def list_dir(path: str | None = None, ctx: Context = None) -> str:
+    async def list_dir(path: str | None = None, task_id: str | None = None, ctx: Context = None) -> str:
         """List the entries of a directory (defaults to the active workspace)."""
-        hc = server.session_for(_session_key(ctx))
+        hc = server.context_for(task_id, _session_key(ctx))
         return await _call(hc, Capability.READ, files.list_dir, path)
 
     @mcp.tool()
-    async def glob(pattern: str, path: str | None = None, ctx: Context = None) -> str:
+    async def glob(pattern: str, path: str | None = None, task_id: str | None = None, ctx: Context = None) -> str:
         """Find files by glob pattern (e.g. '**/*.py'), newest first, relative to
         the workspace or a given path."""
-        hc = server.session_for(_session_key(ctx))
+        hc = server.context_for(task_id, _session_key(ctx))
         return await _call(hc, Capability.READ, search.glob_files, pattern, path)
 
     @mcp.tool()
@@ -175,12 +175,13 @@ def build_mcp(config: Config, server: HarnessServer) -> FastMCP:
         ignore_case: bool = False,
         context: int = 0,
         output_mode: str = "content",
+        task_id: str | None = None,
         ctx: Context = None,
     ) -> str:
         """Search file contents with a regex (ripgrep). output_mode: 'content'
         (matching lines, default), 'files_with_matches', or 'count'. Optionally
         filter files with a glob and add context lines."""
-        hc = server.session_for(_session_key(ctx))
+        hc = server.context_for(task_id, _session_key(ctx))
         return await _call(
             hc, Capability.READ, search.grep, pattern, path, glob, ignore_case, context, output_mode
         )
@@ -188,182 +189,182 @@ def build_mcp(config: Config, server: HarnessServer) -> FastMCP:
     # ---- mutation (WRITE) --------------------------------------------------
 
     @mcp.tool()
-    async def write_file(path: str, content: str, expected_sha: str | None = None, ctx: Context = None) -> str:
+    async def write_file(path: str, content: str, expected_sha: str | None = None, task_id: str | None = None, ctx: Context = None) -> str:
         """Create or overwrite a file with the given content. Parent directories
         are created as needed. Pass expected_sha (from the read_file header) to be
         rejected if the file changed since you read it (avoids clobbering)."""
-        hc = server.session_for(_session_key(ctx))
+        hc = server.context_for(task_id, _session_key(ctx))
         return await _call(hc, Capability.WRITE, files.write_file, path, content, expected_sha)
 
     @mcp.tool()
-    async def edit_file(path: str, old_string: str, new_string: str, replace_all: bool = False, expected_sha: str | None = None, ctx: Context = None) -> str:
+    async def edit_file(path: str, old_string: str, new_string: str, replace_all: bool = False, expected_sha: str | None = None, task_id: str | None = None, ctx: Context = None) -> str:
         """Replace an exact string in a file. old_string must match exactly
         (including whitespace) and be unique unless replace_all=true. Pass
         expected_sha (from read_file) to reject the edit if the file changed."""
-        hc = server.session_for(_session_key(ctx))
+        hc = server.context_for(task_id, _session_key(ctx))
         return await _call(hc, Capability.WRITE, files.edit_file, path, old_string, new_string, replace_all, expected_sha)
 
     @mcp.tool()
-    async def apply_edits(edits: list, ctx: Context = None) -> str:
+    async def apply_edits(edits: list, task_id: str | None = None, ctx: Context = None) -> str:
         """Apply many file changes atomically (all-or-nothing, auto rollback on
         failure). Each edit is {path, content} to write, {path, old_string,
         new_string, replace_all?} to edit, or {path, delete:true}. Use for
         multi-file refactors so the tree never ends up half-changed."""
-        hc = server.session_for(_session_key(ctx))
+        hc = server.context_for(task_id, _session_key(ctx))
         return await _call(hc, Capability.WRITE, files.apply_edits, edits)
 
     # ---- execution (EXECUTE) -----------------------------------------------
 
     @mcp.tool()
-    async def run_command(command: str, cwd: str | None = None, timeout: int = 120, ctx: Context = None) -> str:
+    async def run_command(command: str, cwd: str | None = None, timeout: int = 120, task_id: str | None = None, ctx: Context = None) -> str:
         """Run a shell command (PowerShell on Windows, bash on POSIX) with the
         workspace as the default working directory. Returns exit code + output.
         Use for tests, builds, git, package managers."""
-        hc = server.session_for(_session_key(ctx))
+        hc = server.context_for(task_id, _session_key(ctx))
         return await _call(hc, Capability.EXECUTE, shell.run_command, command, cwd, timeout)
 
     # ---- review + safety net (git) -----------------------------------------
 
     @mcp.tool()
-    async def git_diff(path: str | None = None, ctx: Context = None) -> str:
+    async def git_diff(path: str | None = None, task_id: str | None = None, ctx: Context = None) -> str:
         """Show the workspace's current git changes (status + diff vs HEAD).
         Optionally limit to a path. Review what changed before committing."""
-        hc = server.session_for(_session_key(ctx))
+        hc = server.context_for(task_id, _session_key(ctx))
         return await _call(hc, Capability.READ, git.git_diff, path)
 
     @mcp.tool()
-    async def create_checkpoint(label: str | None = None, ctx: Context = None) -> str:
+    async def create_checkpoint(label: str | None = None, task_id: str | None = None, ctx: Context = None) -> str:
         """Snapshot the whole workspace so it can be restored later. Cheap and
         private (stored in a git ref; does not touch your branch, history, or
         staging). Call before a risky batch of edits."""
-        hc = server.session_for(_session_key(ctx))
+        hc = server.context_for(task_id, _session_key(ctx))
         return await _call(hc, capability_for("create_checkpoint"), git.create_checkpoint, label)
 
     @mcp.tool()
-    async def list_checkpoints(ctx: Context = None) -> str:
+    async def list_checkpoints(task_id: str | None = None, ctx: Context = None) -> str:
         """List snapshots created with create_checkpoint in this workspace."""
-        hc = server.session_for(_session_key(ctx))
+        hc = server.context_for(task_id, _session_key(ctx))
         return await _call(hc, Capability.READ, git.list_checkpoints)
 
     @mcp.tool()
-    async def restore_checkpoint(checkpoint_id: str, ctx: Context = None) -> str:
+    async def restore_checkpoint(checkpoint_id: str, task_id: str | None = None, ctx: Context = None) -> str:
         """Revert the working tree to a checkpoint, including removing files
         added since it was taken. Use it to undo edits that went wrong."""
-        hc = server.session_for(_session_key(ctx))
+        hc = server.context_for(task_id, _session_key(ctx))
         return await _call(hc, Capability.WRITE, git.restore_checkpoint, checkpoint_id)
 
     # ---- worktrees (isolation) ---------------------------------------------
 
     @mcp.tool()
-    async def create_worktree(name: str, base: str | None = None, ctx: Context = None) -> str:
+    async def create_worktree(name: str, base: str | None = None, task_id: str | None = None, ctx: Context = None) -> str:
         """Create a git worktree on a new branch for isolated work, then
         open_workspace the returned path. Risky changes never touch your main
         checkout. Optionally branch from `base` (a branch/commit)."""
-        hc = server.session_for(_session_key(ctx))
+        hc = server.context_for(task_id, _session_key(ctx))
         return await _call(hc, Capability.WRITE, worktree.create_worktree, name, base)
 
     @mcp.tool()
-    async def list_worktrees(ctx: Context = None) -> str:
+    async def list_worktrees(task_id: str | None = None, ctx: Context = None) -> str:
         """List git worktrees for the current repository."""
-        hc = server.session_for(_session_key(ctx))
+        hc = server.context_for(task_id, _session_key(ctx))
         return await _call(hc, Capability.READ, worktree.list_worktrees)
 
     @mcp.tool()
-    async def remove_worktree(name: str, force: bool = False, ctx: Context = None) -> str:
+    async def remove_worktree(name: str, force: bool = False, task_id: str | None = None, ctx: Context = None) -> str:
         """Remove a task worktree created with create_worktree. Refuses if it has
         uncommitted changes unless force=true (which discards them)."""
-        hc = server.session_for(_session_key(ctx))
+        hc = server.context_for(task_id, _session_key(ctx))
         return await _call(hc, Capability.WRITE, worktree.remove_worktree, name, force)
 
     # ---- memory (READ — harness metadata, safe in any mode) ----------------
 
     @mcp.tool()
-    async def remember(text: str, key: str | None = None, ctx: Context = None) -> str:
+    async def remember(text: str, key: str | None = None, task_id: str | None = None, ctx: Context = None) -> str:
         """Save a fact to remember for this workspace across sessions (a decision,
         gotcha, or convention you discovered). Pass a stable key to update an
         existing note instead of adding a new one."""
-        hc = server.session_for(_session_key(ctx))
+        hc = server.context_for(task_id, _session_key(ctx))
         return await _call(hc, capability_for("remember"), memory.remember, text, key)
 
     @mcp.tool()
-    async def recall(query: str | None = None, ctx: Context = None) -> str:
+    async def recall(query: str | None = None, task_id: str | None = None, ctx: Context = None) -> str:
         """List remembered facts for this workspace, optionally filtered by a
         query substring."""
-        hc = server.session_for(_session_key(ctx))
+        hc = server.context_for(task_id, _session_key(ctx))
         return await _call(hc, Capability.READ, memory.recall, query)
 
     @mcp.tool()
-    async def forget(key: str, ctx: Context = None) -> str:
+    async def forget(key: str, task_id: str | None = None, ctx: Context = None) -> str:
         """Delete a remembered fact by its id (shown in recall)."""
-        hc = server.session_for(_session_key(ctx))
+        hc = server.context_for(task_id, _session_key(ctx))
         return await _call(hc, capability_for("forget"), memory.forget, key)
 
     # ---- skills (READ — loadable capability docs) --------------------------
 
     @mcp.tool()
-    async def list_skills(ctx: Context = None) -> str:
+    async def list_skills(task_id: str | None = None, ctx: Context = None) -> str:
         """List available skills (loadable how-to docs) discovered in the
         workspace and your global skill library, by name and description."""
-        hc = server.session_for(_session_key(ctx))
+        hc = server.context_for(task_id, _session_key(ctx))
         return await _call(hc, Capability.READ, skills.list_skills)
 
     @mcp.tool()
-    async def load_skill(name: str, ctx: Context = None) -> str:
+    async def load_skill(name: str, task_id: str | None = None, ctx: Context = None) -> str:
         """Load the full content of a skill by name (from list_skills) when you
         need its procedure. Pull skills on demand rather than guessing."""
-        hc = server.session_for(_session_key(ctx))
+        hc = server.context_for(task_id, _session_key(ctx))
         return await _call(hc, Capability.READ, skills.load_skill, name)
 
     # ---- background processes (EXECUTE / READ) -----------------------------
 
     @mcp.tool()
-    async def start_process(command: str, cwd: str | None = None, wait: float = 1.0, ctx: Context = None) -> str:
+    async def start_process(command: str, cwd: str | None = None, wait: float = 1.0, task_id: str | None = None, ctx: Context = None) -> str:
         """Start a long-running command (dev server, test --watch) in the
         background and return its id + initial output. Poll it with read_process.
         Use this instead of run_command for anything that doesn't exit quickly."""
-        hc = server.session_for(_session_key(ctx))
+        hc = server.context_for(task_id, _session_key(ctx))
         return await _call(hc, Capability.EXECUTE, process.start_process, command, cwd, wait)
 
     @mcp.tool()
-    async def read_process(process_id: str, wait: float = 0.0, ctx: Context = None) -> str:
+    async def read_process(process_id: str, wait: float = 0.0, task_id: str | None = None, ctx: Context = None) -> str:
         """Return new output from a background process since the last read.
         Optionally wait a few seconds for more output first."""
-        hc = server.session_for(_session_key(ctx))
+        hc = server.context_for(task_id, _session_key(ctx))
         return await _call(hc, Capability.READ, process.read_process, process_id, wait)
 
     @mcp.tool()
-    async def write_process(process_id: str, input: str, ctx: Context = None) -> str:
+    async def write_process(process_id: str, input: str, task_id: str | None = None, ctx: Context = None) -> str:
         """Send a line of input to a background process's stdin."""
-        hc = server.session_for(_session_key(ctx))
+        hc = server.context_for(task_id, _session_key(ctx))
         return await _call(hc, Capability.EXECUTE, process.write_process, process_id, input)
 
     @mcp.tool()
-    async def stop_process(process_id: str, ctx: Context = None) -> str:
+    async def stop_process(process_id: str, task_id: str | None = None, ctx: Context = None) -> str:
         """Terminate a background process by id."""
-        hc = server.session_for(_session_key(ctx))
+        hc = server.context_for(task_id, _session_key(ctx))
         return await _call(hc, Capability.EXECUTE, process.stop_process, process_id)
 
     @mcp.tool()
-    async def list_processes(ctx: Context = None) -> str:
+    async def list_processes(task_id: str | None = None, ctx: Context = None) -> str:
         """List background processes and their status."""
-        hc = server.session_for(_session_key(ctx))
+        hc = server.context_for(task_id, _session_key(ctx))
         return await _call(hc, Capability.READ, process.list_processes)
 
     # ---- planning (READ — harness metadata) --------------------------------
 
     @mcp.tool()
-    async def write_todos(todos: list, ctx: Context = None) -> str:
+    async def write_todos(todos: list, task_id: str | None = None, ctx: Context = None) -> str:
         """Set the task plan as a list of steps. Each item is a string, or an
         object {content, status} where status is pending|in_progress|completed.
         Replaces the current list. Use for any multi-step task so it survives
         turn resets."""
-        hc = server.session_for(_session_key(ctx))
+        hc = server.context_for(task_id, _session_key(ctx))
         return await _call(hc, capability_for("write_todos"), todos_tool.write_todos, todos)
 
     @mcp.tool()
-    async def list_todos(ctx: Context = None) -> str:
+    async def list_todos(task_id: str | None = None, ctx: Context = None) -> str:
         """Show the current task plan and how many steps are complete."""
-        hc = server.session_for(_session_key(ctx))
+        hc = server.context_for(task_id, _session_key(ctx))
         return await _call(hc, Capability.READ, todos_tool.list_todos)
 
     # ---- health (unauthenticated, no secrets) ------------------------------
