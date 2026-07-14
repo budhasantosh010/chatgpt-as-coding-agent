@@ -145,6 +145,80 @@ def make_autocheckpoint_hook(min_interval: float = 60.0) -> PreHook:
     return _auto
 
 
+def make_telemetry_hook(store) -> PostHook:
+    """Post-hook: populate the Task record from what tools ACTUALLY did, so
+    task_status shows real changed files / commands / test results instead of
+    permanently-empty fields (audit I2). Best-effort — telemetry must never
+    break or slow a tool call."""
+    import re
+
+    _WRITE_TOOLS = {"write_file", "edit_file", "apply_patch", "notebook_edit"}
+    _TEST_PAT = re.compile(
+        r"\b(pytest|npm\s+(run\s+)?test|yarn\s+test|pnpm\s+test|cargo\s+test|"
+        r"go\s+test|jest|vitest|unittest|tox)\b", re.I,
+    )
+    _CAP = 100  # keep task blobs bounded
+
+    def _telemetry(call: ToolCall) -> None:
+        try:
+            hc = call.context
+            tid = getattr(hc, "task_id", None)
+            if not tid or store is None:
+                return
+            result = call.result or ""
+            if result.startswith("Error:") or "APPROVAL REQUIRED" in result:
+                return  # only record work that actually happened
+            task = store.get_task(tid)
+            if task is None:
+                return
+            tool, args = call.tool, (call.args or ())
+            dirty = False
+            if tool in _WRITE_TOOLS and args and isinstance(args[0], str):
+                if args[0] not in task.changed_files:
+                    task.changed_files.append(args[0])
+                    dirty = True
+            elif tool == "apply_edits" and args and isinstance(args[0], list):
+                for e in args[0]:
+                    p = e.get("path") if isinstance(e, dict) else None
+                    if p and p not in task.changed_files:
+                        task.changed_files.append(p)
+                        dirty = True
+            elif tool in ("run_command", "start_process") and args and isinstance(args[0], str):
+                cmd = args[0]
+                m = re.search(r"exit code:\s*(-?\d+)", result)
+                entry = {"command": cmd[:200], "exit": int(m.group(1)) if m else None}
+                task.commands = (task.commands + [entry])[-_CAP:]
+                dirty = True
+                if _TEST_PAT.search(cmd):
+                    task.test_results = (task.test_results + [
+                        {"command": cmd[:200], "passed": bool(m and m.group(1) == "0")}
+                    ])[-_CAP:]
+            elif tool == "create_checkpoint":
+                m = re.search(r"Checkpoint (\S+) created", result)
+                if m and m.group(1) not in task.checkpoints:
+                    task.checkpoints.append(m.group(1))
+                    dirty = True
+            elif tool == "diagnostics" and args is not None:
+                task.test_results = (task.test_results + [
+                    {"command": "diagnostics_check",
+                     "passed": "no issues" in result.lower() or "0 error" in result.lower()}
+                ])[-_CAP:]
+                dirty = True
+            elif tool == "write_todos" and args and isinstance(args[0], list):
+                task.plan = [
+                    (t.get("content", "") if isinstance(t, dict) else str(t))[:200]
+                    for t in args[0]
+                ][:_CAP]
+                dirty = True
+            if dirty:
+                task.changed_files = task.changed_files[-_CAP:]
+                store.save_task(task)
+        except Exception:  # noqa: BLE001 - telemetry must never break a tool call
+            pass
+
+    return _telemetry
+
+
 def make_scrub_hook() -> PostHook:
     """Post-hook: redact known secret formats from tool output before it leaves
     the machine. Returns None (no change) when nothing matched."""

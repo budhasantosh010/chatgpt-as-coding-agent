@@ -113,6 +113,7 @@ class HarnessServer:
             make_audit_hook,
             make_autocheckpoint_hook,
             make_scrub_hook,
+            make_telemetry_hook,
         )
         from .processes import ProcessManager
         from .tasks.store import TaskStore
@@ -127,6 +128,8 @@ class HarnessServer:
             self.hooks.on_pre(make_audit_hook(config.state_dir / "audit.jsonl"))
         if config.auto_checkpoint:
             self.hooks.on_pre(make_autocheckpoint_hook(config.auto_checkpoint_interval))
+        # Telemetry BEFORE scrub so it sees the raw (unredacted) result markers.
+        self.hooks.on_post(make_telemetry_hook(self.tasks))
         if config.scrub_output:
             self.hooks.on_post(make_scrub_hook())
         self._sessions: dict[str, HarnessContext] = {}

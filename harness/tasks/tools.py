@@ -124,6 +124,19 @@ def _render_task(server, task) -> list[str]:
         lines += [f"  - {p}" for p in task.plan]
     if task.changed_files:
         lines.append(f"**Changed files:** {', '.join(task.changed_files)}")
+    if task.commands:
+        lines.append("**Recent commands:**")
+        for c in task.commands[-5:]:
+            code = c.get("exit") if isinstance(c, dict) else None
+            cmd = c.get("command", "") if isinstance(c, dict) else str(c)
+            lines.append(f"  - [{'ok' if code == 0 else code}] {cmd}")
+    if task.test_results:
+        lines.append("**Test/diagnostic runs:**")
+        for t in task.test_results[-5:]:
+            ok = t.get("passed") if isinstance(t, dict) else None
+            lines.append(f"  - [{'PASS' if ok else 'FAIL'}] {t.get('command', '') if isinstance(t, dict) else t}")
+    if task.checkpoints:
+        lines.append(f"**Checkpoints:** {', '.join(task.checkpoints[-5:])}")
     if task.blockers:
         lines.append(f"**Blockers:** {'; '.join(task.blockers)}")
     if task.result:
@@ -190,17 +203,29 @@ def advance_task(server, task_id: str, to_state: str) -> str:
     return f"Task {task_id}: {prev.value} → {target.value}."
 
 
-def finish_task(server, task_id: str, result: str = "") -> str:
+def finish_task(server, task_id: str, result: str = "", evidence: str = "") -> str:
     task = _get(server, task_id)
     if not can_transition(task.status, TaskState.COMPLETED):
         return (
             f"Task is {task.status.value}; move it to review_ready before completing "
             f"(advance_task). Or cancel_task if abandoning."
         )
+    # Completion needs evidence when 'done' was defined: either a recorded
+    # test/diagnostic run (telemetry) or an explicit evidence note. An honest
+    # guardrail, not a boundary — the telemetry in task_status is what the
+    # operator actually reviews.
+    if task.acceptance_criteria and not task.test_results and not evidence.strip():
+        return (
+            "Not completed: this task has acceptance criteria but no recorded "
+            "test/diagnostic runs and no evidence was given. Run the relevant "
+            "tests (run_command / diagnostics_check), or pass evidence=\"...\" "
+            "explaining how each criterion was verified."
+        )
     task.status = TaskState.COMPLETED
     task.result = result.strip() or "completed"
     server.tasks.save_task(task)
-    server.tasks.add_event(task_id, "completed", result=task.result)
+    server.tasks.add_event(task_id, "completed", result=task.result,
+                           evidence=evidence.strip() or None)
     return f"Task {task_id} completed. {task.result}"
 
 

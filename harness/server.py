@@ -637,9 +637,11 @@ def build_mcp(config: Config, server: HarnessServer) -> FastMCP:
         return _task_call(tasktools.advance_task, task_id, to_state)
 
     @mcp.tool()
-    async def finish_task(task_id: str, result: str = "", ctx: Context = None) -> str:
-        """Mark a task completed (must be review_ready first) with a result note."""
-        return _task_call(tasktools.finish_task, task_id, result)
+    async def finish_task(task_id: str, result: str = "", evidence: str = "", ctx: Context = None) -> str:
+        """Mark a task completed (must be review_ready first) with a result note.
+        If the task has acceptance criteria, completion requires recorded test/
+        diagnostic runs or an explicit evidence string describing verification."""
+        return _task_call(tasktools.finish_task, task_id, result, evidence)
 
     @mcp.tool()
     async def cancel_task(task_id: str, reason: str = "", ctx: Context = None) -> str:
