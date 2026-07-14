@@ -38,6 +38,38 @@ def _worktree_dir(hc: HarnessContext, repo_root: Path, safe_name: str) -> Path:
     return hc.config.state_dir / "worktrees" / f"{repo_root.name}-{digest}" / safe_name
 
 
+async def create_for_task(server, workspace: Path, task_id: str,
+                          base: str | None = None) -> tuple[Path | None, str | None, str]:
+    """Create and bind a worktree for a task (the physical-isolation half of
+    task_id). Returns (worktree_path, base_commit, note); (None, base, note)
+    means the task works in the shared checkout (not a git repo / no commits).
+    Takes the server (executor + config), not a session context — it runs
+    during start_task, before any session exists."""
+    from types import SimpleNamespace
+
+    shim = SimpleNamespace(executor=server.executor, config=server.config)
+    root = await _repo_root(shim, workspace)
+    if root is None:
+        return None, None, "shared checkout (not a git repository)"
+    head = await _git(shim, root, "rev-parse", "HEAD")
+    base_commit = head.stdout.strip() if head.returncode == 0 else None
+    if not base_commit:
+        return None, None, "shared checkout (repository has no commits yet)"
+    safe = _safe(f"task-{task_id}")
+    target = _worktree_dir(shim, root, safe)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.exists():
+        return target, base_commit, f"reusing existing worktree at {target}"
+    args = ["worktree", "add", "-b", safe, str(target)]
+    if base:
+        args.append(base)
+    r = await _git(shim, root, *args)
+    if r.returncode != 0:
+        err = r.stderr.strip() or r.stdout.strip()
+        return None, base_commit, f"shared checkout (worktree creation failed: {err[:200]})"
+    return target, base_commit, f"isolated worktree on branch '{safe}'"
+
+
 async def create_worktree(hc: HarnessContext, name: str, base: str | None = None) -> str:
     ws = hc.require_workspace()
     root = await _repo_root(hc, ws)

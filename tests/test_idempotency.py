@@ -21,7 +21,7 @@ def _server_task(tmp_path):
     cfg = Config(workspace_roots=[tmp_path], state_dir=tmp_path / "s", secret_route="r")
     server = HarnessServer(cfg)
     ws = tmp_path / "proj"; ws.mkdir()
-    tid = next(t for t in tt.start_task(server, str(ws), "g", "auto_workspace").split() if t.startswith("T-"))
+    tid = next(t for t in run(tt.start_task(server, str(ws), "g", "auto_workspace")).split() if t.startswith("T-"))
     return server, tid, ws
 
 
@@ -60,7 +60,7 @@ def test_operation_id_scoped_to_task(tmp_path):
     """Audit S4 exploit: task B replaying task A's operation_id must EXECUTE,
     not receive A's cached result."""
     server, tid_a, ws = _server_task(tmp_path)
-    tid_b = next(t for t in tt.start_task(server, str(ws), "g2", "auto_workspace").split() if t.startswith("T-"))
+    tid_b = next(t for t in run(tt.start_task(server, str(ws), "g2", "auto_workspace")).split() if t.startswith("T-"))
 
     hc_a = server.context_for(tid_a, "conn-a")
     run(_call_idem(hc_a, Capability.WRITE, "same-op", files.write_file, "a.txt", "from A"))

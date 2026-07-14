@@ -30,7 +30,7 @@ def server(tmp_path):
 
 
 def _task(srv, ws, mode="auto_workspace"):
-    return tasktools.start_task(srv, str(ws), goal="g", permission_mode=mode).split()[2]
+    return run(tasktools.start_task(srv, str(ws), goal="g", permission_mode=mode)).split()[2]
 
 
 # ---- S9: terminal tasks frozen -------------------------------------------------

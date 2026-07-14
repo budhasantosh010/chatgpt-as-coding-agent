@@ -578,15 +578,24 @@ def build_mcp(config: Config, server: HarnessServer) -> FastMCP:
         except _EXPECTED_ERRORS as exc:
             return _scrub_server(server, f"Error: {exc}")
 
+    async def _task_call_async(fn, *args) -> str:
+        try:
+            return _scrub_server(server, await fn(server, *args))
+        except _EXPECTED_ERRORS as exc:
+            return _scrub_server(server, f"Error: {exc}")
+
     @mcp.tool()
-    async def start_task(project_path: str, goal: str, permission_mode: str = "auto_workspace", title: str = "", ctx: Context = None) -> str:
+    async def start_task(project_path: str, goal: str, permission_mode: str = "auto_workspace",
+                         title: str = "", isolation: str = "auto", ctx: Context = None) -> str:
         """Begin a task: bind a workspace + goal + permission mode and get a
         task_id. Pass that task_id to every subsequent tool call so the task's
-        work is isolated from other conversations and resumable. permission_mode:
+        work is isolated from other conversations and resumable. On a git repo
+        the task gets its OWN worktree by default (isolation='auto'|'worktree';
+        pass 'workspace' to work in the shared checkout). permission_mode:
         read_only | plan | build_ask | auto_workspace (the default and the usual
         server ceiling — full/bypass_sandboxed are operator-only, granted locally
         via `python -m harness tasks set-mode`)."""
-        return _task_call(tasktools.start_task, project_path, goal, permission_mode, title)
+        return await _task_call_async(tasktools.start_task, project_path, goal, permission_mode, title, isolation)
 
     @mcp.tool()
     async def create_subtask(parent_task_id: str, goal: str, title: str = "", ctx: Context = None) -> str:

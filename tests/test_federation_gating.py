@@ -35,7 +35,7 @@ def server(tmp_path):
 
 
 def _task(srv, ws, mode):
-    return tasktools.start_task(srv, str(ws), goal="g", permission_mode=mode).split()[2]
+    return run(tasktools.start_task(srv, str(ws), goal="g", permission_mode=mode)).split()[2]
 
 
 # ---- decision matrix ---------------------------------------------------------

@@ -31,7 +31,8 @@ def register_project(server, path: str, name: str = "") -> str:
     return f"Project registered: {pid}\n  path: {ws}\n  name: {name or ws.name}"
 
 
-def start_task(server, project_path: str, goal: str, permission_mode: str = "auto_workspace", title: str = "") -> str:
+async def start_task(server, project_path: str, goal: str, permission_mode: str = "auto_workspace",
+                     title: str = "", isolation: str = "auto") -> str:
     ws = _validate_workspace(server.config, project_path)
     if permission_mode not in VALID_MODES:
         raise SecurityError(f"permission_mode must be one of {VALID_MODES}, got {permission_mode!r}")
@@ -40,15 +41,36 @@ def start_task(server, project_path: str, goal: str, permission_mode: str = "aut
     check_ceiling(permission_mode, server.config.max_mode, server.config.sandbox)
     if not goal or not goal.strip():
         raise SecurityError("A task needs a goal.")
+    if isolation not in ("auto", "worktree", "workspace"):
+        raise SecurityError("isolation must be 'auto', 'worktree', or 'workspace'.")
     pid = server.tasks.register_project(str(ws))
     task = server.tasks.create_task(
         pid, str(ws), goal=goal.strip(), title=(title or goal[:60]).strip(),
         permission_mode=permission_mode,
     )
+    # Physical isolation: bind a worktree so concurrent tasks on the same
+    # project never edit the same files. "auto" = worktree when it's a git repo
+    # with commits; "workspace" opts into the shared checkout.
+    iso_note = "shared checkout (isolation='workspace')"
+    if isolation != "workspace":
+        from ..tools import worktree as worktree_tool
+
+        wt, base_commit, note = await worktree_tool.create_for_task(server, ws, task.id)
+        task.base_commit = base_commit
+        if wt is not None:
+            task.worktree_path = str(wt)
+            server.tasks.add_event(task.id, "worktree_bound", path=str(wt), base=base_commit)
+        elif isolation == "worktree":
+            server.tasks.save_task(task)
+            raise SecurityError(f"isolation='worktree' requested but unavailable: {note}")
+        server.tasks.save_task(task)
+        iso_note = note
+    active = task.worktree_path or str(ws)
     return (
         f"Started task {task.id}\n"
         f"  goal: {task.goal}\n"
-        f"  workspace: {ws}\n"
+        f"  working path: {active}\n"
+        f"  isolation: {iso_note}\n"
         f"  permission mode: {permission_mode}\n"
         f"  state: {task.status.value}\n\n"
         f"Pass task_id=\"{task.id}\" to every tool call for this task so its work "
@@ -68,6 +90,9 @@ def create_subtask(server, parent_task_id: str, goal: str, title: str = "") -> s
         parent.project_id, parent.workspace_path, goal=goal.strip(),
         title=(title or goal[:60]).strip(), permission_mode=parent.permission_mode,
         parent_id=parent.id,
+        # A subtask decomposes the SAME unit of work, so it shares the parent's
+        # working copy (worktree) — no elevation flag is inherited, though.
+        worktree_path=parent.worktree_path, base_commit=parent.base_commit,
     )
     server.tasks.add_event(parent.id, "subtask_created", child=child.id, goal=child.goal)
     return f"Created subtask {child.id} under {parent.id}\n  goal: {child.goal}\n  pass task_id=\"{child.id}\" for its work."

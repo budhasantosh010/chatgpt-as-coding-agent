@@ -69,7 +69,7 @@ def test_task_write_works(server):
     srv, ws = server
     from harness.tasks import tools as tasktools
 
-    msg = tasktools.start_task(srv, str(ws), goal="test writes", permission_mode="auto_workspace")
+    msg = run(tasktools.start_task(srv, str(ws), goal="test writes", permission_mode="auto_workspace"))
     task_id = msg.split()[2]
     out = _write_via_server(srv, ws, task_id=task_id)
     assert not out.startswith("Error:")

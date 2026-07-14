@@ -44,7 +44,7 @@ def _server_task(tmp_path, mode):
     cfg = Config(workspace_roots=[tmp_path], state_dir=tmp_path / "s", secret_route="r")
     server = HarnessServer(cfg)
     ws = tmp_path / "proj"; ws.mkdir()
-    out = tt.start_task(server, str(ws), "g", mode)
+    out = run(tt.start_task(server, str(ws), "g", mode))
     tid = next(t for t in out.split() if t.startswith("T-"))
     return server, tid, ws
 
@@ -95,7 +95,7 @@ def test_approval_bound_to_exact_command(tmp_path):
 
 def test_approval_not_transferable_across_tasks(tmp_path):
     server, tid_a, ws = _server_task(tmp_path, "auto_workspace")
-    tid_b = next(t for t in tt.start_task(server, str(ws), "g2", "auto_workspace").split() if t.startswith("T-"))
+    tid_b = next(t for t in run(tt.start_task(server, str(ws), "g2", "auto_workspace")).split() if t.startswith("T-"))
     hc_a = server.context_for(tid_a, "a")
     hc_b = server.context_for(tid_b, "b")
 

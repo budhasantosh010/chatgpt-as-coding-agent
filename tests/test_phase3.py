@@ -73,7 +73,7 @@ def test_read_image_rejects_non_image(tmp_path):
 
 def test_create_subtask(tmp_path):
     server, hc, ws = _server_hc(tmp_path)
-    parent = next(t for t in tt.start_task(server, str(ws), "parent goal", "auto_workspace").split() if t.startswith("T-"))
+    parent = next(t for t in run(tt.start_task(server, str(ws), "parent goal", "auto_workspace")).split() if t.startswith("T-"))
     out = tt.create_subtask(server, parent, "child goal")
     child = next(t for t in out.split() if t.startswith("T-") and t != parent)
     ctask = server.tasks.get_task(child)

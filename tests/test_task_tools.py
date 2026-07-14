@@ -33,7 +33,7 @@ def _extract_id(text: str) -> str:
 def test_start_task_and_scoped_file_write(tmp_path):
     server = _server(tmp_path)
     ws = tmp_path / "proj"; ws.mkdir()
-    out = tt.start_task(server, str(ws), "add feature", "auto_workspace")
+    out = run(tt.start_task(server, str(ws), "add feature", "auto_workspace"))
     tid = _extract_id(out)
 
     # Resolve the task context and write through it (proves the workspace is bound).
@@ -46,7 +46,7 @@ def test_start_task_and_scoped_file_write(tmp_path):
 def test_lifecycle_transitions(tmp_path):
     server = _server(tmp_path)
     ws = tmp_path / "proj"; ws.mkdir()
-    tid = _extract_id(tt.start_task(server, str(ws), "g", "auto_workspace"))
+    tid = _extract_id(run(tt.start_task(server, str(ws), "g", "auto_workspace")))
 
     # Illegal jump rejected.
     assert "Illegal" in tt.advance_task(server, tid, "completed")
@@ -61,7 +61,7 @@ def test_lifecycle_transitions(tmp_path):
 def test_set_goal_and_criteria(tmp_path):
     server = _server(tmp_path)
     ws = tmp_path / "proj"; ws.mkdir()
-    tid = _extract_id(tt.start_task(server, str(ws), "g", "auto_workspace"))
+    tid = _extract_id(run(tt.start_task(server, str(ws), "g", "auto_workspace")))
     tt.set_task_goal(server, tid, "new goal")
     tt.set_acceptance_criteria(server, tid, ["tests pass", "no lint errors"])
     status = tt.task_status(server, tid)
@@ -72,7 +72,7 @@ def test_set_goal_and_criteria(tmp_path):
 def test_start_task_rejects_outside_root(tmp_path):
     server = _server(tmp_path)
     try:
-        tt.start_task(server, "/etc", "g", "auto_workspace")
+        run(tt.start_task(server, "/etc", "g", "auto_workspace"))
         assert False
     except SecurityError:
         pass
@@ -81,7 +81,7 @@ def test_start_task_rejects_outside_root(tmp_path):
 def test_plan_mode_task_blocks_writes(tmp_path):
     server = _server(tmp_path)
     ws = tmp_path / "proj"; ws.mkdir()
-    tid = _extract_id(tt.start_task(server, str(ws), "g", "plan"))
+    tid = _extract_id(run(tt.start_task(server, str(ws), "g", "plan")))
     hc = server.context_for(tid, "default")
     out = run(_call(hc, Capability.WRITE, files.write_file, "x.txt", "hi"))
     assert out.startswith("Error:"), "plan mode must deny writes"

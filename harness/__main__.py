@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import shutil
 import sys
+from pathlib import Path
 
 from .config import Config
 
@@ -169,6 +170,41 @@ def _cmd_tasks(config: Config, action: str, task_id: str | None, mode: str | Non
     return 2
 
 
+def _cmd_worktrees(config: Config, action: str) -> int:
+    """Prune worktrees of terminal (completed/cancelled/failed) tasks. Worktrees
+    are never auto-deleted — the diff is the operator's review artifact — so
+    this is the explicit cleanup step."""
+    import subprocess
+
+    from .tasks.model import _TERMINAL
+    from .tasks.store import TaskStore
+
+    if action != "prune":
+        print("Usage: python -m harness worktrees prune")
+        return 2
+    store = TaskStore(config.state_dir / "tasks.db")
+    pruned = kept = 0
+    for task in store.list_tasks():
+        wt = task.worktree_path
+        if not wt or task.status not in _TERMINAL:
+            if wt:
+                kept += 1
+            continue
+        if not Path(wt).exists():
+            continue
+        r = subprocess.run(
+            ["git", "-C", task.workspace_path, "worktree", "remove", "--force", wt],
+            capture_output=True, text=True,
+        )
+        if r.returncode == 0:
+            pruned += 1
+            print(f"  pruned {wt}  (task {task.id}, {task.status.value})")
+        else:
+            print(f"  FAILED {wt}: {(r.stderr or r.stdout).strip()[:120]}")
+    print(f"Pruned {pruned} worktree(s); {kept} active task worktree(s) kept.")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="harness", description="ChatGPT code harness MCP server")
     sub = parser.add_subparsers(dest="command")
@@ -183,6 +219,8 @@ def main(argv: list[str] | None = None) -> int:
     tp.add_argument("action", choices=["set-mode"])
     tp.add_argument("task_id", nargs="?", default=None)
     tp.add_argument("mode", nargs="?", default=None)
+    wp = sub.add_parser("worktrees", help="prune worktrees of finished tasks")
+    wp.add_argument("action", nargs="?", choices=["prune"], default="prune")
     args = parser.parse_args(argv)
 
     config = Config.from_env()
@@ -199,6 +237,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_approvals(config, args.action, args.approval_id)
     if command == "tasks":
         return _cmd_tasks(config, args.action, args.task_id, args.mode)
+    if command == "worktrees":
+        return _cmd_worktrees(config, args.action)
     parser.print_help()
     return 2
 

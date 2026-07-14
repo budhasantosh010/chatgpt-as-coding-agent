@@ -9,12 +9,18 @@ only the local operator CLI can elevate a task above it.
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from harness.config import Config
 from harness.context import HarnessServer
 from harness.security import SecurityError
 from harness.tasks import tools as tasktools
+
+
+def run(c):
+    return asyncio.run(c)
 
 
 @pytest.fixture
@@ -29,7 +35,7 @@ def server(tmp_path):
 
 
 def _start(srv, ws, mode):
-    msg = tasktools.start_task(srv, str(ws), goal="g", permission_mode=mode)
+    msg = run(tasktools.start_task(srv, str(ws), goal="g", permission_mode=mode))
     return msg.split()[2]
 
 
