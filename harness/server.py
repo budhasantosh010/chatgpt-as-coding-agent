@@ -104,7 +104,7 @@ async def _call(hc: HarnessContext, capability: Capability | None, fn, *args) ->
             hc.policy.require(capability)
         if hooks is None:
             return await fn(hc, *args)
-        call = ToolCall(tool=fn.__name__, capability=capability, session_key=hc.key, args=args)
+        call = ToolCall(tool=fn.__name__, capability=capability, session_key=hc.key, args=args, context=hc)
         await hooks.run_pre(call)  # may raise HookVeto (a SecurityError)
         result = await fn(hc, *args)
         call.result = result if isinstance(result, str) else str(result)
@@ -188,18 +188,20 @@ def build_mcp(config: Config, server: HarnessServer) -> FastMCP:
     # ---- mutation (WRITE) --------------------------------------------------
 
     @mcp.tool()
-    async def write_file(path: str, content: str, ctx: Context = None) -> str:
+    async def write_file(path: str, content: str, expected_sha: str | None = None, ctx: Context = None) -> str:
         """Create or overwrite a file with the given content. Parent directories
-        are created as needed."""
+        are created as needed. Pass expected_sha (from the read_file header) to be
+        rejected if the file changed since you read it (avoids clobbering)."""
         hc = server.session_for(_session_key(ctx))
-        return await _call(hc, Capability.WRITE, files.write_file, path, content)
+        return await _call(hc, Capability.WRITE, files.write_file, path, content, expected_sha)
 
     @mcp.tool()
-    async def edit_file(path: str, old_string: str, new_string: str, replace_all: bool = False, ctx: Context = None) -> str:
+    async def edit_file(path: str, old_string: str, new_string: str, replace_all: bool = False, expected_sha: str | None = None, ctx: Context = None) -> str:
         """Replace an exact string in a file. old_string must match exactly
-        (including whitespace) and be unique unless replace_all=true."""
+        (including whitespace) and be unique unless replace_all=true. Pass
+        expected_sha (from read_file) to reject the edit if the file changed."""
         hc = server.session_for(_session_key(ctx))
-        return await _call(hc, Capability.WRITE, files.edit_file, path, old_string, new_string, replace_all)
+        return await _call(hc, Capability.WRITE, files.edit_file, path, old_string, new_string, replace_all, expected_sha)
 
     @mcp.tool()
     async def apply_edits(edits: list, ctx: Context = None) -> str:

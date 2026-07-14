@@ -36,6 +36,7 @@ class ToolCall:
     session_key: str
     args: tuple = ()
     result: Optional[str] = None  # populated for post hooks
+    context: object = None  # the HarnessContext (so hooks can act on the session)
     meta: dict = field(default_factory=dict)
 
 
@@ -113,6 +114,35 @@ def make_audit_hook(audit_path: Path) -> PreHook:
             pass  # auditing must never break a tool call
 
     return _audit
+
+
+def make_autocheckpoint_hook(min_interval: float = 60.0) -> PreHook:
+    """Pre-hook: snapshot the workspace before a mutation, so there is always a
+    recent restore point even if the model forgets to checkpoint. Debounced —
+    at most one auto-checkpoint per ``min_interval`` seconds per session — so a
+    burst of edits is captured as one pre-batch state, not spammed."""
+    import time
+
+    from .policy import Capability
+
+    async def _auto(call: ToolCall) -> None:
+        if call.capability is not Capability.WRITE:
+            return
+        hc = call.context
+        if hc is None or getattr(hc, "active_workspace", None) is None:
+            return
+        now = time.monotonic()
+        last = getattr(hc, "_last_auto_cp", None)
+        if last is not None and (now - last) < min_interval:
+            return
+        hc._last_auto_cp = now
+        try:
+            from .tools import git as git_tool
+            await git_tool.create_checkpoint(hc, "auto (pre-edit)")
+        except Exception:  # noqa: BLE001 - a checkpoint failure must not block the edit
+            pass
+
+    return _auto
 
 
 def make_scrub_hook() -> PostHook:

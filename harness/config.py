@@ -113,6 +113,10 @@ class Config:
     scrub_output: bool = True
     # Append every tool call to state_dir/audit.jsonl (what ChatGPT did, when).
     audit_log: bool = True
+    # Auto-snapshot the workspace before edits (debounced) so there's always a
+    # restore point even if the model forgets to checkpoint.
+    auto_checkpoint: bool = True
+    auto_checkpoint_interval: int = 60
     # Execution backend for run_command: "local" (host shell) or "docker" (sandbox).
     sandbox: str = "local"
     sandbox_image: str = "python:3.12-slim"
@@ -194,6 +198,8 @@ class Config:
             json_response=_env_bool("JSON_RESPONSE", True),
             scrub_output=_env_bool("SCRUB_OUTPUT", True),
             audit_log=_env_bool("AUDIT_LOG", True),
+            auto_checkpoint=_env_bool("AUTO_CHECKPOINT", True),
+            auto_checkpoint_interval=_env_int("AUTO_CHECKPOINT_INTERVAL", 60),
             sandbox=_env("SANDBOX", "local"),
             sandbox_image=_env("SANDBOX_IMAGE", "python:3.12-slim"),
             sandbox_network=_env("SANDBOX_NETWORK", "none"),

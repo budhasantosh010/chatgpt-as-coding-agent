@@ -8,11 +8,34 @@ functions only do path-gated work.
 
 from __future__ import annotations
 
+import hashlib
+
 from ..context import HarnessContext
 
 
 def _looks_binary(sample: bytes) -> bool:
     return b"\x00" in sample
+
+
+def _sha(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()
+
+
+def _assert_fresh(real, expected_sha: str | None) -> None:
+    """Reject a write when the file changed since the model last read it.
+
+    ``expected_sha`` is a prefix of the sha256 shown by read_file. Prevents the
+    model from silently clobbering edits made in your editor between read and
+    write (last-write-wins data loss)."""
+    if not expected_sha:
+        return
+    current = _sha(real.read_text(encoding="utf-8", errors="replace")) if real.exists() else ""
+    if not current.startswith(expected_sha):
+        raise ValueError(
+            f"Stale write blocked: {real.name} changed since you read it "
+            f"(expected sha {expected_sha}…, now {current[:12] or 'absent'}…). "
+            "Re-read the file and reapply your change."
+        )
 
 
 async def read_file(
@@ -45,13 +68,17 @@ async def read_file(
             "use offset/limit to page through the rest]"
         )
 
-    header = f"[lines {start + 1}-{end} of {total}]\n" if (offset or limit or end < total) else ""
+    span = f"[lines {start + 1}-{end} of {total}] " if (offset or limit or end < total) else ""
+    # Surface a content hash so a later edit/write can pass expected_sha and be
+    # rejected if the file changed underneath (stale-write guard).
+    header = f"{span}[sha256:{_sha(text)[:12]}]\n"
     hc.log("read_file", path=str(real), lines=f"{start + 1}-{end}/{total}")
     return header + body + truncated
 
 
-async def write_file(hc: HarnessContext, path: str, content: str) -> str:
+async def write_file(hc: HarnessContext, path: str, content: str, expected_sha: str | None = None) -> str:
     real = hc.resolve_write(path)
+    _assert_fresh(real, expected_sha)
     existed = real.exists()
     real.parent.mkdir(parents=True, exist_ok=True)
     real.write_text(content, encoding="utf-8")
@@ -68,12 +95,14 @@ async def edit_file(
     old_string: str,
     new_string: str,
     replace_all: bool = False,
+    expected_sha: str | None = None,
 ) -> str:
     real = hc.resolve_write(path)
     if not real.exists():
         raise FileNotFoundError(f"File not found: {real}")
     if old_string == new_string:
         raise ValueError("old_string and new_string are identical.")
+    _assert_fresh(real, expected_sha)
 
     text = real.read_text(encoding="utf-8", errors="replace")
     count = text.count(old_string)
@@ -112,6 +141,7 @@ async def apply_edits(hc: HarnessContext, edits: list) -> str:
         if not isinstance(e, dict) or "path" not in e:
             raise ValueError(f"edit #{i} must be an object with a 'path'.")
         real = hc.resolve_write(e["path"])
+        _assert_fresh(real, e.get("expected_sha"))
         if e.get("delete"):
             if not real.exists():
                 raise ValueError(f"{real}: cannot delete, does not exist.")

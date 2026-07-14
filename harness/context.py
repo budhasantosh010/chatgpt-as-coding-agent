@@ -100,7 +100,12 @@ class HarnessServer:
 
     def __init__(self, config: Config):
         from .executor import build_executor
-        from .hooks import HookManager, make_audit_hook, make_scrub_hook
+        from .hooks import (
+            HookManager,
+            make_audit_hook,
+            make_autocheckpoint_hook,
+            make_scrub_hook,
+        )
         from .processes import ProcessManager
 
         self.config = config
@@ -109,6 +114,8 @@ class HarnessServer:
         self.hooks = HookManager()
         if config.audit_log:
             self.hooks.on_pre(make_audit_hook(config.state_dir / "audit.jsonl"))
+        if config.auto_checkpoint:
+            self.hooks.on_pre(make_autocheckpoint_hook(config.auto_checkpoint_interval))
         if config.scrub_output:
             self.hooks.on_post(make_scrub_hook())
         self._sessions: dict[str, HarnessContext] = {}
