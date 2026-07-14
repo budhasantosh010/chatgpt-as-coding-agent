@@ -88,7 +88,15 @@ def _load_dotenv(path: Path) -> None:
 class Config:
     host: str = "127.0.0.1"
     port: int = 8848
-    mode: str = "full"  # "full" | "read_only"
+    mode: str = "full"  # operator's own mode (direct/local contexts)
+    # Mode for tool calls that arrive WITHOUT a task_id (the shared fallback
+    # session). Default read_only: browsing works, but writes/commands tell the
+    # model to start_task first. Legacy behavior: HARNESS_NO_TASK_MODE=full.
+    no_task_mode: str = "read_only"
+    # Highest permission_mode ChatGPT may request via start_task. Anything above
+    # (full / bypass_sandboxed by default) is operator-only, granted with
+    # `python -m harness tasks set-mode`. This is the anti-self-escalation gate.
+    max_mode: str = "auto_workspace"
     secret_route: str = ""
     bearer_token: str = ""
     state_dir: Path = field(default_factory=_default_state_dir)
@@ -172,6 +180,10 @@ class Config:
         _valid_modes = ("full", "read_only", "plan", "build_ask", "auto_workspace", "bypass_sandboxed")
         if self.mode not in _valid_modes:
             raise ValueError(f"HARNESS_MODE must be one of {_valid_modes}, got {self.mode!r}")
+        if self.no_task_mode not in _valid_modes:
+            raise ValueError(f"HARNESS_NO_TASK_MODE must be one of {_valid_modes}, got {self.no_task_mode!r}")
+        if self.max_mode not in _valid_modes:
+            raise ValueError(f"HARNESS_MAX_MODE must be one of {_valid_modes}, got {self.max_mode!r}")
         if self.sandbox not in ("local", "docker"):
             raise ValueError(f"HARNESS_SANDBOX must be 'local' or 'docker', got {self.sandbox!r}")
 
@@ -196,6 +208,8 @@ class Config:
             host=_env("HOST", "127.0.0.1"),
             port=_env_int("PORT", 8848),
             mode=_env("MODE", "full"),
+            no_task_mode=_env("NO_TASK_MODE", "read_only"),
+            max_mode=_env("MAX_MODE", "auto_workspace"),
             secret_route=_env("SECRET_ROUTE", ""),
             bearer_token=_env("BEARER_TOKEN", ""),
             allow_ts_net=_env_bool("ALLOW_TS_NET", True),
@@ -258,6 +272,8 @@ class Config:
             "host": self.host,
             "port": self.port,
             "mode": self.mode,
+            "no_task_mode": self.no_task_mode,
+            "max_mode": self.max_mode,
             "secret_route": f"<{len(self.secret_route)} chars, hidden>",
             "bearer_token": "set" if self.bearer_token else "not set",
             "state_dir": str(self.state_dir),

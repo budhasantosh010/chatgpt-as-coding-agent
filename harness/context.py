@@ -139,6 +139,10 @@ class HarnessServer:
                 self.config, key=key, processes=self.processes,
                 executor=self.executor, hooks=self.hooks, store=self.tasks,
             )
+            # The no-task fallback is a SHARED session (stateless HTTP can't tell
+            # conversations apart), so it must not inherit the operator's mode.
+            # Default read_only: reads work, mutations require starting a task.
+            ctx.policy = PermissionPolicy(self.config.no_task_mode)
             self._sessions[key] = ctx
         return ctx
 

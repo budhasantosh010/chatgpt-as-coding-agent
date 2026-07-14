@@ -18,8 +18,10 @@ def run(c):
 
 
 def _server_hc(tmp_path):
+    # no_task_mode="full": these tests exercise write paths through the
+    # fallback session, not the S2 cap (tests/test_no_task_fallback.py pins that).
     cfg = Config(workspace_roots=[tmp_path], state_dir=tmp_path / "state",
-                 secret_route="r", mode="full")
+                 secret_route="r", mode="full", no_task_mode="full")
     server = HarnessServer(cfg)
     hc = server.session_for("s")
     ws = tmp_path / "proj"

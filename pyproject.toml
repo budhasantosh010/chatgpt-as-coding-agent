@@ -20,8 +20,10 @@ dev = ["pytest>=8"]
 [project.scripts]
 harness = "harness.__main__:main"
 
-[tool.setuptools]
-packages = ["harness", "harness.tools"]
+# Auto-discover every harness subpackage so a new one (like harness.tasks once
+# was) can never be silently missing from the wheel again.
+[tool.setuptools.packages.find]
+include = ["harness*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

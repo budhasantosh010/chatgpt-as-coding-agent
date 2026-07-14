@@ -95,8 +95,10 @@ def test_call_scrubs_secret_from_file_read(tmp_path):
 
 
 def test_call_veto_blocks_tool(tmp_path):
+    # no_task_mode="full" so the WRITE reaches the hook layer (the veto is the
+    # thing under test here, not the S2 no-task cap).
     config = Config(workspace_roots=[tmp_path], state_dir=tmp_path / "state",
-                    secret_route="r", mode="full")
+                    secret_route="r", mode="full", no_task_mode="full")
     server = HarnessServer(config)
     hc = server.session_for("sess")
     hc.hooks.on_pre(_deny_writes)

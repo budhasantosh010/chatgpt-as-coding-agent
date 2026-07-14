@@ -116,9 +116,16 @@ def _gate(hc: HarnessContext, capability: Capability, tool: str, command: str | 
     if decision is Decision.ALLOW:
         return None
     if decision is Decision.DENY:
+        hint = ""
+        if not getattr(hc, "task_id", None):
+            hint = (
+                " You are in the shared no-task session, which is "
+                f"'{hc.policy.mode}'. Call start_task(project_path, goal) and "
+                "pass its task_id to every tool call to enable writes/commands."
+            )
         raise SecurityError(
             f"'{action.value}' is denied in '{hc.policy.mode}' mode. Only the "
-            "operator can change the mode locally."
+            "operator can change the mode locally." + hint
         )
     # ASK — allow only if the operator has granted a one-shot approval.
     store = getattr(hc, "store", None)

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from harness.security import SecurityError, assert_command_allowed, is_secret_path
@@ -13,8 +15,12 @@ def test_relative_traversal_escaping_root_is_blocked(hc):
 
 
 def test_absolute_path_outside_roots_is_blocked(hc):
+    # A Windows drive path is not absolute under posixpath, so pick a path the
+    # host OS actually treats as absolute — otherwise Linux joins it into the
+    # workspace and nothing raises.
+    outside = "C:/Windows/System32/config/SAM" if os.name == "nt" else "/etc/passwd"
     with pytest.raises(SecurityError):
-        hc.resolve_read("C:/Windows/System32/config/SAM")
+        hc.resolve_read(outside)
 
 
 def test_path_inside_workspace_is_allowed(hc, workspace):
