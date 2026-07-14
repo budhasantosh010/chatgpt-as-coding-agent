@@ -527,7 +527,9 @@ def build_mcp(config: Config, server: HarnessServer) -> FastMCP:
         """Begin a task: bind a workspace + goal + permission mode and get a
         task_id. Pass that task_id to every subsequent tool call so the task's
         work is isolated from other conversations and resumable. permission_mode:
-        plan | build_ask | auto_workspace | bypass_sandboxed | full | read_only."""
+        read_only | plan | build_ask | auto_workspace (the default and the usual
+        server ceiling — full/bypass_sandboxed are operator-only, granted locally
+        via `python -m harness tasks set-mode`)."""
         return _task_call(tasktools.start_task, project_path, goal, permission_mode, title)
 
     @mcp.tool()

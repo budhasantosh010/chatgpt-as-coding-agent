@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from ..policy import VALID_MODES
+from ..policy import VALID_MODES, check_ceiling
 from ..security import SecurityError, is_within
 from .model import TaskState, can_transition
 
@@ -35,6 +35,9 @@ def start_task(server, project_path: str, goal: str, permission_mode: str = "aut
     ws = _validate_workspace(server.config, project_path)
     if permission_mode not in VALID_MODES:
         raise SecurityError(f"permission_mode must be one of {VALID_MODES}, got {permission_mode!r}")
+    # Server-side ceiling: the model may not grant itself privileges. full /
+    # bypass_sandboxed (by default) are operator-only via the local CLI.
+    check_ceiling(permission_mode, server.config.max_mode, server.config.sandbox)
     if not goal or not goal.strip():
         raise SecurityError("A task needs a goal.")
     pid = server.tasks.register_project(str(ws))

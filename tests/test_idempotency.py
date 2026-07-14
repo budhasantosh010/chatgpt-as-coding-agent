@@ -21,7 +21,7 @@ def _server_task(tmp_path):
     cfg = Config(workspace_roots=[tmp_path], state_dir=tmp_path / "s", secret_route="r")
     server = HarnessServer(cfg)
     ws = tmp_path / "proj"; ws.mkdir()
-    tid = next(t for t in tt.start_task(server, str(ws), "g", "full").split() if t.startswith("T-"))
+    tid = next(t for t in tt.start_task(server, str(ws), "g", "auto_workspace").split() if t.startswith("T-"))
     return server, tid, ws
 
 

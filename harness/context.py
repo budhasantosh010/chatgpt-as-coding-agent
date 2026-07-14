@@ -168,7 +168,22 @@ class HarnessServer:
         if task is None:
             raise SecurityError(f"Unknown task_id {task_id!r}. Use start_task or list_tasks.")
         ctx.task_id = task_id
-        ctx.policy = PermissionPolicy(task.permission_mode)
+        # The ceiling is enforced HERE, not just in start_task, so it is
+        # authoritative over legacy task rows, direct DB edits, and subtask
+        # inheritance. Only operator elevation (local CLI) rides above it.
+        from .policy import effective_mode
+
+        mode = effective_mode(
+            task.permission_mode,
+            operator_elevated=task.operator_elevated,
+            ceiling=self.config.max_mode,
+            sandbox=self.config.sandbox,
+        )
+        if mode != task.permission_mode and getattr(ctx, "_clamp_logged", None) != mode:
+            ctx._clamp_logged = mode  # log the clamp once per context, not per call
+            self.tasks.add_event(task_id, "mode_clamped",
+                                 stored=task.permission_mode, effective=mode)
+        ctx.policy = PermissionPolicy(mode)
         active = task.worktree_path or task.workspace_path
         if str(getattr(ctx, "active_workspace", "")) != str(active):
             ctx.set_workspace(str(active))

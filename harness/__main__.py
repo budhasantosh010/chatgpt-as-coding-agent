@@ -136,6 +136,39 @@ def _cmd_doctor(config: Config) -> int:
     return 0 if ok else 1
 
 
+def _cmd_tasks(config: Config, action: str, task_id: str | None, mode: str | None) -> int:
+    """Operator-only task administration. `set-mode` is the ONLY way to run a
+    task above the HARNESS_MAX_MODE ceiling — ChatGPT cannot grant itself
+    full/bypass_sandboxed."""
+    from .policy import VALID_MODES, mode_rank
+    from .tasks.store import TaskStore
+
+    store = TaskStore(config.state_dir / "tasks.db")
+    if action == "set-mode":
+        if not task_id or not mode:
+            print("Usage: python -m harness tasks set-mode <task_id> <mode>")
+            return 2
+        if mode not in VALID_MODES:
+            print(f"mode must be one of {VALID_MODES}")
+            return 2
+        task = store.get_task(task_id)
+        if task is None:
+            print(f"Unknown task {task_id!r}.")
+            return 1
+        task.permission_mode = mode
+        # Elevation flag only when the operator actually raised it above the
+        # ceiling; otherwise the normal ceiling keeps applying.
+        task.operator_elevated = mode_rank(mode) > mode_rank(config.max_mode)
+        store.save_task(task)
+        store.add_event(task_id, "operator_set_mode", mode=mode,
+                        elevated=task.operator_elevated)
+        note = " (operator-elevated above the ceiling)" if task.operator_elevated else ""
+        print(f"Task {task_id} mode set to {mode}{note}.")
+        return 0
+    print("Usage: python -m harness tasks set-mode <task_id> <mode>")
+    return 2
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="harness", description="ChatGPT code harness MCP server")
     sub = parser.add_subparsers(dest="command")
@@ -146,6 +179,10 @@ def main(argv: list[str] | None = None) -> int:
     ap = sub.add_parser("approvals", help="operator approval queue (list/approve/deny)")
     ap.add_argument("action", nargs="?", choices=["list", "approve", "deny"], default="list")
     ap.add_argument("approval_id", nargs="?", default=None)
+    tp = sub.add_parser("tasks", help="operator task administration (set-mode)")
+    tp.add_argument("action", choices=["set-mode"])
+    tp.add_argument("task_id", nargs="?", default=None)
+    tp.add_argument("mode", nargs="?", default=None)
     args = parser.parse_args(argv)
 
     config = Config.from_env()
@@ -160,6 +197,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_doctor(config)
     if command == "approvals":
         return _cmd_approvals(config, args.action, args.approval_id)
+    if command == "tasks":
+        return _cmd_tasks(config, args.action, args.task_id, args.mode)
     parser.print_help()
     return 2
 

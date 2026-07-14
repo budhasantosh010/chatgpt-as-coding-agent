@@ -60,6 +60,9 @@ class Task(BaseModel):
     goal: str = ""
     acceptance_criteria: list[str] = Field(default_factory=list)
     permission_mode: str = "auto_workspace"
+    # True only when the operator raised this task's mode via the local CLI
+    # (`harness tasks set-mode`). Lets the task run above config.max_mode.
+    operator_elevated: bool = False
     status: TaskState = TaskState.NEW
     base_commit: str | None = None
     worktree_path: str | None = None

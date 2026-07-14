@@ -46,6 +46,46 @@ _MODE_TABLE: dict[str, dict[Capability, Decision]] = {
 
 VALID_MODES = tuple(_MODE_TABLE)
 
+# Privilege ordering, least → most. Used by the server-side ceiling: the model
+# may request a mode up to config.max_mode; anything above is operator-only.
+MODE_ORDER = ("read_only", "plan", "build_ask", "auto_workspace", "bypass_sandboxed", "full")
+
+
+def mode_rank(mode: str) -> int:
+    try:
+        return MODE_ORDER.index(mode)
+    except ValueError:
+        return len(MODE_ORDER)  # unknown mode ranks above everything: fail closed
+
+
+def check_ceiling(requested: str, ceiling: str, sandbox: str = "local") -> None:
+    """Reject a model-requested mode above the operator ceiling. Rejection (not a
+    silent clamp) so the model plans around the powers it actually has."""
+    if mode_rank(requested) > mode_rank(ceiling):
+        raise SecurityError(
+            f"permission_mode {requested!r} is above this server's ceiling "
+            f"({ceiling!r}, set by HARNESS_MAX_MODE). Ask the operator to elevate "
+            "the task locally with: python -m harness tasks set-mode <task_id> <mode>"
+        )
+    if requested == "bypass_sandboxed" and sandbox != "docker":
+        raise SecurityError(
+            "permission_mode 'bypass_sandboxed' requires the container sandbox "
+            "(HARNESS_SANDBOX=docker); this server runs commands locally, so "
+            "there is no sandbox to rely on."
+        )
+
+
+def effective_mode(stored: str, *, operator_elevated: bool, ceiling: str, sandbox: str) -> str:
+    """The mode a task actually runs at. The ceiling is authoritative over stored
+    task rows (legacy DBs, subtask inheritance) unless the operator elevated the
+    task locally. bypass_sandboxed without docker degrades to auto_workspace."""
+    mode = stored
+    if not operator_elevated and mode_rank(mode) > mode_rank(ceiling):
+        mode = ceiling
+    if mode == "bypass_sandboxed" and sandbox != "docker":
+        mode = "auto_workspace"
+    return mode
+
 
 class PermissionPolicy:
     """Maps (capability, mode) -> Decision. This is the base permission model;
