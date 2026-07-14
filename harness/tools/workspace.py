@@ -122,7 +122,7 @@ async def open_workspace(hc: HarnessContext, path: str) -> str:
                 content = content[:_MAX_INSTRUCTION_CHARS] + "\n[... truncated]"
             lines += [f"## Project rules from {name}", content, ""]
 
-    remembered = memory.load_memories(hc)
+    remembered = await memory.load_memories(hc)
     if remembered:
         lines.append("## Remembered facts (from previous sessions)")
         lines += [f"- [{it['id']}] {it['text']}" for it in remembered]

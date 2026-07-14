@@ -121,20 +121,39 @@ class DockerExecutor(Executor):
 
     name = "docker"
 
-    def __init__(self, image: str, network: str = "none", container_shell: str = "/bin/sh"):
+    def __init__(self, image: str, network: str = "none", container_shell: str = "/bin/sh",
+                 cpus: str = "2", memory: str = "2g", pids: int = 512,
+                 user: str = "", readonly: bool = False):
         self.image = image
         self.network = network
         self.container_shell = container_shell
+        self.cpus = cpus
+        self.memory = memory
+        self.pids = pids
+        self.user = user
+        self.readonly = readonly
 
     def spawn_argv(self, command, cwd) -> list[str]:
-        return [
+        argv = [
             "docker", "run", "--rm", "-i",
             "--network", self.network,
+            "--cap-drop", "ALL",
+            "--security-opt", "no-new-privileges",
+            "--pids-limit", str(self.pids),
+            "--cpus", str(self.cpus),
+            "--memory", str(self.memory),
+        ]
+        if self.user:
+            argv += ["--user", self.user]
+        if self.readonly:
+            argv += ["--read-only", "--tmpfs", "/tmp"]
+        argv += [
             "-v", f"{cwd}:/work",
             "-w", "/work",
             self.image,
             self.container_shell, "-c", command,
         ]
+        return argv
 
     # kept for readability/tests; spawn_argv is the canonical builder.
     build_argv = spawn_argv
@@ -153,5 +172,10 @@ def build_executor(config) -> Executor:
         return DockerExecutor(
             image=getattr(config, "sandbox_image", "python:3.12-slim"),
             network=getattr(config, "sandbox_network", "none"),
+            cpus=getattr(config, "sandbox_cpus", "2"),
+            memory=getattr(config, "sandbox_memory", "2g"),
+            pids=getattr(config, "sandbox_pids", 512),
+            user=getattr(config, "sandbox_user", ""),
+            readonly=getattr(config, "sandbox_readonly", False),
         )
     return LocalExecutor(getattr(config, "shell", ""), getattr(config, "env_allowlist", ()))

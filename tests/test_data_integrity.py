@@ -19,7 +19,7 @@ def test_memory_ids_do_not_collide_after_delete(hc):
     run(memory.remember(hc, "third"))    # m3
     run(memory.forget(hc, "m1"))         # delete earliest
     run(memory.remember(hc, "fourth"))   # must NOT reuse m3
-    items = memory.load_memories(hc)
+    items = run(memory.load_memories(hc))
     ids = [it["id"] for it in items]
     assert len(ids) == len(set(ids)), f"duplicate ids: {ids}"
     assert "m4" in ids

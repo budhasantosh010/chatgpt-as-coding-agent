@@ -350,12 +350,13 @@ def build_mcp(config: Config, server: HarnessServer) -> FastMCP:
     # ---- memory (READ — harness metadata, safe in any mode) ----------------
 
     @mcp.tool()
-    async def remember(text: str, key: str | None = None, task_id: str | None = None, ctx: Context = None) -> str:
-        """Save a fact to remember for this workspace across sessions (a decision,
-        gotcha, or convention you discovered). Pass a stable key to update an
+    async def remember(text: str, key: str | None = None, scope: str = "project", task_id: str | None = None, ctx: Context = None) -> str:
+        """Save a fact across sessions (a decision, gotcha, or convention). scope:
+        'project' (default; shared by the repo and its worktrees), 'global'
+        (everywhere), or 'task' (this task only). Pass a stable key to update an
         existing note instead of adding a new one."""
         hc = server.context_for(task_id, _session_key(ctx))
-        return await _call(hc, capability_for("remember"), memory.remember, text, key)
+        return await _call(hc, capability_for("remember"), memory.remember, text, key, scope)
 
     @mcp.tool()
     async def recall(query: str | None = None, task_id: str | None = None, ctx: Context = None) -> str:

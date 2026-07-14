@@ -121,6 +121,11 @@ class Config:
     sandbox: str = "local"
     sandbox_image: str = "python:3.12-slim"
     sandbox_network: str = "none"
+    sandbox_cpus: str = "2"       # --cpus
+    sandbox_memory: str = "2g"    # --memory
+    sandbox_pids: int = 512       # --pids-limit (fork-bomb guard)
+    sandbox_user: str = ""        # --user (e.g. "1000:1000"); empty = image default
+    sandbox_readonly: bool = False  # read-only rootfs + tmpfs /tmp
     # Extra env var names a command may see, on top of the safe base set. Anything
     # not listed (cloud creds, tokens) is withheld so `run_command` can't print it.
     env_allowlist: list[str] = field(default_factory=list)
@@ -204,6 +209,11 @@ class Config:
             sandbox=_env("SANDBOX", "local"),
             sandbox_image=_env("SANDBOX_IMAGE", "python:3.12-slim"),
             sandbox_network=_env("SANDBOX_NETWORK", "none"),
+            sandbox_cpus=_env("SANDBOX_CPUS", "2"),
+            sandbox_memory=_env("SANDBOX_MEMORY", "2g"),
+            sandbox_pids=_env_int("SANDBOX_PIDS", 512),
+            sandbox_user=_env("SANDBOX_USER", ""),
+            sandbox_readonly=_env_bool("SANDBOX_READONLY", False),
         )
         env_allow_raw = _env("ENV_ALLOWLIST")
         state_dir = _env("STATE_DIR")

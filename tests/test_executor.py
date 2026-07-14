@@ -39,6 +39,18 @@ def test_docker_argv_mounts_workspace_and_isolates_network():
     assert "-w" in argv and argv[argv.index("-w") + 1] == "/work"
 
 
+def test_docker_argv_is_hardened():
+    ex = DockerExecutor("img", pids=256, cpus="1", memory="512m", user="1000:1000", readonly=True)
+    argv = ex.build_argv("ls", "/w")
+    joined = " ".join(argv)
+    assert "--cap-drop ALL" in joined
+    assert "--security-opt no-new-privileges" in joined
+    assert "--pids-limit 256" in joined
+    assert "--cpus 1" in joined and "--memory 512m" in joined
+    assert "--user 1000:1000" in joined
+    assert "--read-only" in argv and "--tmpfs" in argv
+
+
 def test_local_executor_runs_command(tmp_path):
     ex = LocalExecutor("")
     result = run(ex.run("echo harness_ok", tmp_path, timeout=30))
