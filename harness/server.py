@@ -161,6 +161,24 @@ async def _call(hc: HarnessContext, capability: Capability | None, fn, *args) ->
         return _finalize(hc, f"Error: {exc}")
 
 
+async def _call_idem(hc: HarnessContext, capability: Capability, operation_id: str | None, fn, *args) -> str:
+    """Like _call, but idempotent for side-effectful tools: if this operation_id
+    already ran, return the recorded result instead of executing again. Guards
+    against duplicate side effects on retries. Errors and approval prompts are
+    NOT recorded (so they can be retried)."""
+    store = getattr(hc, "store", None)
+    tid = getattr(hc, "task_id", None)
+    if operation_id and store is not None and tid:
+        prev = store.get_operation(operation_id)
+        if prev is not None:
+            return _finalize(hc, prev["result"] + "\n[idempotent: cached result for this operation_id]")
+    result = await _call(hc, capability, fn, *args)
+    if (operation_id and store is not None and tid
+            and not result.startswith("Error:") and "APPROVAL REQUIRED" not in result):
+        store.record_operation(operation_id, tid, fn.__name__, result)
+    return result
+
+
 def build_mcp(config: Config, server: HarnessServer) -> FastMCP:
     mcp = FastMCP(
         name="chatgpt-code-harness",
@@ -237,39 +255,44 @@ def build_mcp(config: Config, server: HarnessServer) -> FastMCP:
     # ---- mutation (WRITE) --------------------------------------------------
 
     @mcp.tool()
-    async def write_file(path: str, content: str, expected_sha: str | None = None, task_id: str | None = None, ctx: Context = None) -> str:
+    async def write_file(path: str, content: str, expected_sha: str | None = None, operation_id: str | None = None, task_id: str | None = None, ctx: Context = None) -> str:
         """Create or overwrite a file with the given content. Parent directories
         are created as needed. Pass expected_sha (from the read_file header) to be
-        rejected if the file changed since you read it (avoids clobbering)."""
+        rejected if the file changed since you read it (avoids clobbering).
+        operation_id makes the write idempotent across retries."""
         hc = server.context_for(task_id, _session_key(ctx))
-        return await _call(hc, Capability.WRITE, files.write_file, path, content, expected_sha)
+        return await _call_idem(hc, Capability.WRITE, operation_id, files.write_file, path, content, expected_sha)
 
     @mcp.tool()
-    async def edit_file(path: str, old_string: str, new_string: str, replace_all: bool = False, expected_sha: str | None = None, task_id: str | None = None, ctx: Context = None) -> str:
+    async def edit_file(path: str, old_string: str, new_string: str, replace_all: bool = False, expected_sha: str | None = None, operation_id: str | None = None, task_id: str | None = None, ctx: Context = None) -> str:
         """Replace an exact string in a file. old_string must match exactly
         (including whitespace) and be unique unless replace_all=true. Pass
-        expected_sha (from read_file) to reject the edit if the file changed."""
+        expected_sha (from read_file) to reject the edit if the file changed.
+        operation_id makes the edit idempotent across retries."""
         hc = server.context_for(task_id, _session_key(ctx))
-        return await _call(hc, Capability.WRITE, files.edit_file, path, old_string, new_string, replace_all, expected_sha)
+        return await _call_idem(hc, Capability.WRITE, operation_id, files.edit_file, path, old_string, new_string, replace_all, expected_sha)
 
     @mcp.tool()
-    async def apply_edits(edits: list, task_id: str | None = None, ctx: Context = None) -> str:
-        """Apply many file changes atomically (all-or-nothing, auto rollback on
-        failure). Each edit is {path, content} to write, {path, old_string,
-        new_string, replace_all?} to edit, or {path, delete:true}. Use for
-        multi-file refactors so the tree never ends up half-changed."""
+    async def apply_edits(edits: list, operation_id: str | None = None, task_id: str | None = None, ctx: Context = None) -> str:
+        """Apply many file changes as a batch (all-or-nothing, in-process rollback
+        on failure). Each edit is {path, content} to write, {path, old_string,
+        new_string, replace_all?} to edit, or {path, delete:true}; add
+        {expected_sha} per edit to guard stale writes. operation_id makes the
+        batch idempotent across retries."""
         hc = server.context_for(task_id, _session_key(ctx))
-        return await _call(hc, Capability.WRITE, files.apply_edits, edits)
+        return await _call_idem(hc, Capability.WRITE, operation_id, files.apply_edits, edits)
 
     # ---- execution (EXECUTE) -----------------------------------------------
 
     @mcp.tool()
-    async def run_command(command: str, cwd: str | None = None, timeout: int = 120, task_id: str | None = None, ctx: Context = None) -> str:
+    async def run_command(command: str, cwd: str | None = None, timeout: int = 120, operation_id: str | None = None, task_id: str | None = None, ctx: Context = None) -> str:
         """Run a shell command (PowerShell on Windows, bash on POSIX) with the
         workspace as the default working directory. Returns exit code + output.
-        Use for tests, builds, git, package managers."""
+        Use for tests, builds, git, package managers. Pass operation_id to make a
+        one-shot command idempotent (a retry returns the cached result instead of
+        running it again)."""
         hc = server.context_for(task_id, _session_key(ctx))
-        return await _call(hc, Capability.EXECUTE, shell.run_command, command, cwd, timeout)
+        return await _call_idem(hc, Capability.EXECUTE, operation_id, shell.run_command, command, cwd, timeout)
 
     # ---- review + safety net (git) -----------------------------------------
 
