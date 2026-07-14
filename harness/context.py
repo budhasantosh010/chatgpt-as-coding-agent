@@ -1,0 +1,115 @@
+"""HarnessContext — the per-server runtime object injected into every tool.
+
+No module-level global: it's created once in the composition root (``app.py``),
+stored in the MCP server lifespan, and passed to tools explicitly. That keeps
+tools unit-testable and leaves the door open to multiple concurrent sessions
+later without touching tool code.
+
+Responsibility split:
+    * PermissionPolicy (capability/mode gate) is enforced by the server wrapper.
+    * HarnessContext enforces the *path* gate: confinement to workspace roots and
+      secret-file blocking.
+"""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+from .config import Config
+from .policy import PermissionPolicy
+from .security import (
+    SecurityError,
+    assert_readable,
+    assert_writable,
+    is_within,
+    resolve_in_roots,
+)
+from .session import Session
+
+
+class HarnessContext:
+    """Per-session mutable state: which workspace is active, cwd, and the
+    workspace journal. One of these exists per connected session, created by
+    HarnessServer. Config/policy are shared; workspace/cwd are private to the
+    session so concurrent conversations never corrupt each other."""
+
+    def __init__(self, config: Config, key: str = "default", processes=None):
+        self.config = config
+        self.key = key
+        self.policy = PermissionPolicy(config.mode)
+        self.active_workspace: Path | None = None
+        self.cwd: Path | None = None
+        self.session: Session | None = None
+        self.processes = processes  # shared ProcessManager (may be None in tests)
+
+    # ---- workspace ----------------------------------------------------------
+
+    def set_workspace(self, path_str: str) -> Path:
+        candidate = Path(os.path.realpath(str(Path(path_str).expanduser())))
+        if not candidate.exists() or not candidate.is_dir():
+            raise SecurityError(
+                f"Workspace path does not exist or is not a directory: {candidate}"
+            )
+        if not any(is_within(candidate, root) for root in self.config.workspace_roots):
+            allowed = ", ".join(str(r) for r in self.config.workspace_roots)
+            raise SecurityError(
+                f"Workspace {candidate} is outside the approved roots. "
+                f"Add it to HARNESS_WORKSPACE_ROOTS. Allowed: {allowed}"
+            )
+        self.active_workspace = candidate
+        self.cwd = candidate
+        self.session = Session(self.config.state_dir, candidate)
+        return candidate
+
+    def require_workspace(self) -> Path:
+        if self.active_workspace is None:
+            raise SecurityError("No active workspace. Call open_workspace(path) first.")
+        return self.active_workspace
+
+    # ---- path gate ----------------------------------------------------------
+
+    def resolve_read(self, path_str: str) -> Path:
+        real = resolve_in_roots(path_str, self.config.workspace_roots, base=self.active_workspace)
+        assert_readable(real, self.config.secret_globs)
+        return real
+
+    def resolve_write(self, path_str: str) -> Path:
+        real = resolve_in_roots(path_str, self.config.workspace_roots, base=self.active_workspace)
+        assert_writable(real, self.config.secret_globs)
+        return real
+
+    # ---- session ------------------------------------------------------------
+
+    def log(self, event_type: str, **data) -> None:
+        if self.session is not None:
+            self.session.log(event_type, **data)
+
+
+class HarnessServer:
+    """Process-wide shared state: immutable config plus a registry of per-session
+    contexts. This is what makes the harness safely concurrent — each session key
+    gets its own workspace/cwd/journal, while config is shared read-only.
+
+    A second transport, multiple ChatGPT conversations, or future stateful
+    sessions all slot in here without touching tool code.
+    """
+
+    def __init__(self, config: Config):
+        from .processes import ProcessManager
+
+        self.config = config
+        self.processes = ProcessManager()
+        self._sessions: dict[str, HarnessContext] = {}
+
+    def session_for(self, key: str | None) -> HarnessContext:
+        key = key or "default"
+        ctx = self._sessions.get(key)
+        if ctx is None:
+            ctx = HarnessContext(self.config, key=key, processes=self.processes)
+            self._sessions[key] = ctx
+        return ctx
+
+    @property
+    def session_keys(self) -> list[str]:
+        return list(self._sessions)

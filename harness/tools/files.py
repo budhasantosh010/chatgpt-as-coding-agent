@@ -1,0 +1,188 @@
+"""File tools: read / write / edit / list.
+
+Pure async logic over a HarnessContext. File IO here is bounded (reads capped at
+max_read_chars) and fast, so it runs inline; the genuinely slow work (shelling
+out) lives in proc.py. Capability gating happens in the server wrapper; these
+functions only do path-gated work.
+"""
+
+from __future__ import annotations
+
+from ..context import HarnessContext
+
+
+def _looks_binary(sample: bytes) -> bool:
+    return b"\x00" in sample
+
+
+async def read_file(
+    hc: HarnessContext, path: str, offset: int | None = None, limit: int | None = None
+) -> str:
+    real = hc.resolve_read(path)
+    if not real.exists():
+        raise FileNotFoundError(f"File not found: {real}")
+    if real.is_dir():
+        raise IsADirectoryError(f"{real} is a directory. Use list_dir instead.")
+
+    with real.open("rb") as fh:
+        head = fh.read(8192)
+    if _looks_binary(head):
+        return f"[binary file, {real.stat().st_size} bytes — not shown]"
+
+    text = real.read_text(encoding="utf-8", errors="replace")
+    lines = text.splitlines()
+    total = len(lines)
+
+    start = max(0, (offset - 1)) if offset is not None else 0
+    end = min(total, start + limit) if limit is not None else total
+    body = "\n".join(lines[start:end])
+
+    truncated = ""
+    if len(body) > hc.config.max_read_chars:
+        body = body[: hc.config.max_read_chars]
+        truncated = (
+            f"\n\n[truncated at {hc.config.max_read_chars} chars; "
+            "use offset/limit to page through the rest]"
+        )
+
+    header = f"[lines {start + 1}-{end} of {total}]\n" if (offset or limit or end < total) else ""
+    hc.log("read_file", path=str(real), lines=f"{start + 1}-{end}/{total}")
+    return header + body + truncated
+
+
+async def write_file(hc: HarnessContext, path: str, content: str) -> str:
+    real = hc.resolve_write(path)
+    existed = real.exists()
+    real.parent.mkdir(parents=True, exist_ok=True)
+    real.write_text(content, encoding="utf-8")
+    verb = "Overwrote" if existed else "Created"
+    n_lines = content.count("\n") + (1 if content and not content.endswith("\n") else 0)
+    n_bytes = len(content.encode("utf-8"))
+    hc.log("write_file", path=str(real), action=verb.lower(), bytes=n_bytes)
+    return f"{verb} {real} ({n_bytes} bytes, {n_lines} lines)."
+
+
+async def edit_file(
+    hc: HarnessContext,
+    path: str,
+    old_string: str,
+    new_string: str,
+    replace_all: bool = False,
+) -> str:
+    real = hc.resolve_write(path)
+    if not real.exists():
+        raise FileNotFoundError(f"File not found: {real}")
+    if old_string == new_string:
+        raise ValueError("old_string and new_string are identical.")
+
+    text = real.read_text(encoding="utf-8", errors="replace")
+    count = text.count(old_string)
+    if count == 0:
+        raise ValueError(
+            "old_string not found. It must match exactly, including whitespace and indentation."
+        )
+    if count > 1 and not replace_all:
+        raise ValueError(
+            f"old_string appears {count} times. Pass replace_all=true to replace all, "
+            "or add surrounding context to make it unique."
+        )
+
+    new_text = text.replace(old_string, new_string) if replace_all else text.replace(old_string, new_string, 1)
+    real.write_text(new_text, encoding="utf-8")
+    n = count if replace_all else 1
+    hc.log("edit_file", path=str(real), replacements=n)
+    return f"Applied {n} replacement(s) in {real}."
+
+
+async def apply_edits(hc: HarnessContext, edits: list) -> str:
+    """Apply many file operations atomically: validate all, snapshot all, apply
+    all, and roll everything back if any step fails.
+
+    Each edit is an object with a 'path' plus one of:
+      * content: str                         -> create/overwrite the file
+      * old_string + new_string (+ replace_all) -> exact-string edit
+      * delete: true                         -> delete the file
+    """
+    if not isinstance(edits, list) or not edits:
+        raise ValueError("edits must be a non-empty list of operations.")
+
+    # Phase 1 — validate everything; build the planned (kind, path, data) list.
+    planned: list[tuple[str, object, str | None]] = []
+    for i, e in enumerate(edits, 1):
+        if not isinstance(e, dict) or "path" not in e:
+            raise ValueError(f"edit #{i} must be an object with a 'path'.")
+        real = hc.resolve_write(e["path"])
+        if e.get("delete"):
+            if not real.exists():
+                raise ValueError(f"{real}: cannot delete, does not exist.")
+            planned.append(("delete", real, None))
+        elif "content" in e:
+            planned.append(("write", real, e["content"]))
+        elif "old_string" in e and "new_string" in e:
+            if not real.exists():
+                raise FileNotFoundError(f"{real}: not found for edit.")
+            text = real.read_text(encoding="utf-8", errors="replace")
+            old, new = e["old_string"], e["new_string"]
+            if old == new:
+                raise ValueError(f"{real}: old_string and new_string are identical.")
+            count = text.count(old)
+            if count == 0:
+                raise ValueError(f"{real}: old_string not found.")
+            if count > 1 and not e.get("replace_all"):
+                raise ValueError(f"{real}: old_string appears {count} times; set replace_all.")
+            new_text = text.replace(old, new) if e.get("replace_all") else text.replace(old, new, 1)
+            planned.append(("write", real, new_text))
+        else:
+            raise ValueError(f"edit #{i}: needs content, or old_string+new_string, or delete:true.")
+
+    # Phase 2 — snapshot originals, then apply; roll back on any failure.
+    backups = [(real, real.read_bytes() if real.exists() else None) for _, real, _ in planned]
+    results: list[str] = []
+    try:
+        for kind, real, data in planned:
+            if kind == "delete":
+                if real.exists():
+                    real.unlink()
+                results.append(f"deleted {real}")
+            else:
+                existed = real.exists()
+                real.parent.mkdir(parents=True, exist_ok=True)
+                real.write_text(data, encoding="utf-8")
+                results.append(f"{'wrote' if existed else 'created'} {real}")
+    except Exception as exc:  # noqa: BLE001 - restore snapshot, then report
+        for real, original in backups:
+            try:
+                if original is None:
+                    if real.exists():
+                        real.unlink()
+                else:
+                    real.write_bytes(original)
+            except OSError:
+                pass
+        raise RuntimeError(f"apply_edits failed and was rolled back: {exc}") from exc
+
+    hc.log("apply_edits", count=len(results))
+    return f"Applied {len(results)} operation(s) atomically:\n" + "\n".join(f"  {r}" for r in results)
+
+
+async def list_dir(hc: HarnessContext, path: str | None = None, limit: int = 400) -> str:
+    target = path if path is not None else str(hc.require_workspace())
+    real = hc.resolve_read(target)
+    if not real.exists():
+        raise FileNotFoundError(f"Directory not found: {real}")
+    if not real.is_dir():
+        raise NotADirectoryError(f"{real} is not a directory.")
+
+    entries = sorted(real.iterdir(), key=lambda p: (p.is_file(), p.name.lower()))
+    rows: list[str] = []
+    for entry in entries[:limit]:
+        if entry.is_dir():
+            rows.append(f"  {entry.name}/")
+        else:
+            try:
+                size = entry.stat().st_size
+            except OSError:
+                size = 0
+            rows.append(f"  {entry.name}  ({size} bytes)")
+    more = f"\n  ... and {len(entries) - limit} more" if len(entries) > limit else ""
+    return f"{real}:\n" + "\n".join(rows) + more
