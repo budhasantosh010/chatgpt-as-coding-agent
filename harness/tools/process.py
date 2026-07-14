@@ -34,7 +34,10 @@ async def start_process(hc: HarnessContext, command: str, cwd: str | None = None
 
     executor = getattr(hc, "executor", None) or LocalExecutor(hc.config.shell)
     argv = executor.spawn_argv(command, str(work))
-    mp = await mgr.start(command, argv, str(work))
+    # Background processes get the same restricted env as run_command, and are
+    # owned by this session/task so another conversation can't touch them.
+    env = executor.build_env() if executor.name == "local" else None
+    mp = await mgr.start(command, argv, str(work), owner=hc.key, env=env)
     hc.log("start_process", id=mp.id, command=command)
 
     await asyncio.sleep(max(0.0, min(wait, 10.0)))
@@ -46,7 +49,7 @@ async def start_process(hc: HarnessContext, command: str, cwd: str | None = None
 
 async def read_process(hc: HarnessContext, process_id: str, wait: float = 0.0) -> str:
     mgr = _require_manager(hc)
-    mp = mgr.get(process_id)
+    mp = mgr.get(process_id, owner=hc.key)
     if mp is None:
         return f"Unknown process {process_id!r}. Use list_processes."
     if wait and wait > 0:
@@ -61,7 +64,7 @@ async def read_process(hc: HarnessContext, process_id: str, wait: float = 0.0) -
 
 async def write_process(hc: HarnessContext, process_id: str, input: str) -> str:
     mgr = _require_manager(hc)
-    mp = mgr.get(process_id)
+    mp = mgr.get(process_id, owner=hc.key)
     if mp is None:
         return f"Unknown process {process_id!r}."
     await mgr.write(mp, input)
@@ -71,7 +74,7 @@ async def write_process(hc: HarnessContext, process_id: str, input: str) -> str:
 
 async def stop_process(hc: HarnessContext, process_id: str) -> str:
     mgr = _require_manager(hc)
-    mp = mgr.get(process_id)
+    mp = mgr.get(process_id, owner=hc.key)
     if mp is None:
         return f"Unknown process {process_id!r}."
     await mgr.stop(mp)
@@ -81,7 +84,7 @@ async def stop_process(hc: HarnessContext, process_id: str) -> str:
 
 async def list_processes(hc: HarnessContext) -> str:
     mgr = _require_manager(hc)
-    procs = mgr.list()
+    procs = mgr.list(owner=hc.key)
     if not procs:
         return "No background processes. Start one with start_process."
     return "# Background processes\n" + "\n".join(_status_line(mp) for mp in procs)
