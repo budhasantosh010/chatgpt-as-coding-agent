@@ -13,6 +13,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 
 from .config import Config
 from .context import HarnessContext, HarnessServer
+from .hooks import ToolCall
 from .policy import Capability
 from .security import SecurityError
 from .tools import files, git, memory, process, search, shell, skills, workspace, worktree
@@ -64,10 +65,21 @@ def _session_key(ctx: Context | None) -> str:
 
 
 async def _call(hc: HarnessContext, capability: Capability | None, fn, *args) -> str:
+    """Enforce the capability, run lifecycle hooks around the pure tool, and
+    normalize expected errors. The tool name is ``fn.__name__`` and the session
+    key is ``hc.key`` — so hooks (audit, scrub, future policies) attach here
+    without any change to the 30 individual wrappers below."""
+    hooks = getattr(hc, "hooks", None)
     try:
         if capability is not None:
             hc.policy.require(capability)
-        return await fn(hc, *args)
+        if hooks is None:
+            return await fn(hc, *args)
+        call = ToolCall(tool=fn.__name__, capability=capability, session_key=hc.key, args=args)
+        await hooks.run_pre(call)  # may raise HookVeto (a SecurityError)
+        result = await fn(hc, *args)
+        call.result = result if isinstance(result, str) else str(result)
+        return await hooks.run_post(call)
     except _EXPECTED_ERRORS as exc:
         return f"Error: {exc}"
 

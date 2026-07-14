@@ -34,7 +34,8 @@ class HarnessContext:
     HarnessServer. Config/policy are shared; workspace/cwd are private to the
     session so concurrent conversations never corrupt each other."""
 
-    def __init__(self, config: Config, key: str = "default", processes=None):
+    def __init__(self, config: Config, key: str = "default", processes=None,
+                 executor=None, hooks=None):
         self.config = config
         self.key = key
         self.policy = PermissionPolicy(config.mode)
@@ -42,6 +43,8 @@ class HarnessContext:
         self.cwd: Path | None = None
         self.session: Session | None = None
         self.processes = processes  # shared ProcessManager (may be None in tests)
+        self.executor = executor    # shared Executor backend (may be None in tests)
+        self.hooks = hooks          # shared HookManager (may be None in tests)
 
     # ---- workspace ----------------------------------------------------------
 
@@ -96,17 +99,28 @@ class HarnessServer:
     """
 
     def __init__(self, config: Config):
+        from .executor import build_executor
+        from .hooks import HookManager, make_audit_hook, make_scrub_hook
         from .processes import ProcessManager
 
         self.config = config
         self.processes = ProcessManager()
+        self.executor = build_executor(config)
+        self.hooks = HookManager()
+        if config.audit_log:
+            self.hooks.on_pre(make_audit_hook(config.state_dir / "audit.jsonl"))
+        if config.scrub_output:
+            self.hooks.on_post(make_scrub_hook())
         self._sessions: dict[str, HarnessContext] = {}
 
     def session_for(self, key: str | None) -> HarnessContext:
         key = key or "default"
         ctx = self._sessions.get(key)
         if ctx is None:
-            ctx = HarnessContext(self.config, key=key, processes=self.processes)
+            ctx = HarnessContext(
+                self.config, key=key, processes=self.processes,
+                executor=self.executor, hooks=self.hooks,
+            )
             self._sessions[key] = ctx
         return ctx
 

@@ -7,6 +7,21 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sys
+
+
+def shell_argv(config_shell: str, command: str) -> list[str]:
+    """Argv that runs ``command`` through the host shell.
+
+    Canonical home for this so shell.py, executor.py, and processes.py all agree
+    on how a command string becomes a process: an explicit shell if configured,
+    else PowerShell on Windows / bash on POSIX.
+    """
+    if config_shell:
+        return [config_shell, "-c", command]
+    if sys.platform == "win32":
+        return ["powershell", "-NoProfile", "-NonInteractive", "-Command", command]
+    return ["/bin/bash", "-lc", command]
 
 
 class ProcessResult:

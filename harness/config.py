@@ -102,6 +102,14 @@ class Config:
     stateless_http: bool = True
     json_response: bool = True  # matches the proven-working ChatGPT connector config
     secret_globs: list[str] = field(default_factory=lambda: list(DEFAULT_SECRET_GLOBS))
+    # Redact known secret formats from all tool output before it reaches ChatGPT.
+    scrub_output: bool = True
+    # Append every tool call to state_dir/audit.jsonl (what ChatGPT did, when).
+    audit_log: bool = True
+    # Execution backend for run_command: "local" (host shell) or "docker" (sandbox).
+    sandbox: str = "local"
+    sandbox_image: str = "python:3.12-slim"
+    sandbox_network: str = "none"
 
     # ---- derived / validated ------------------------------------------------
 
@@ -141,6 +149,8 @@ class Config:
 
         if self.mode not in ("full", "read_only"):
             raise ValueError(f"HARNESS_MODE must be 'full' or 'read_only', got {self.mode!r}")
+        if self.sandbox not in ("local", "docker"):
+            raise ValueError(f"HARNESS_SANDBOX must be 'local' or 'docker', got {self.sandbox!r}")
 
     @property
     def mcp_path(self) -> str:
@@ -172,6 +182,11 @@ class Config:
             rate_limit_per_min=_env_int("RATE_LIMIT_PER_MIN", 120),
             stateless_http=_env_bool("STATELESS_HTTP", True),
             json_response=_env_bool("JSON_RESPONSE", True),
+            scrub_output=_env_bool("SCRUB_OUTPUT", True),
+            audit_log=_env_bool("AUDIT_LOG", True),
+            sandbox=_env("SANDBOX", "local"),
+            sandbox_image=_env("SANDBOX_IMAGE", "python:3.12-slim"),
+            sandbox_network=_env("SANDBOX_NETWORK", "none"),
         )
         state_dir = _env("STATE_DIR")
         if state_dir:
@@ -204,4 +219,7 @@ class Config:
             "stateless_http": self.stateless_http,
             "json_response": self.json_response,
             "rate_limit_per_min": self.rate_limit_per_min,
+            "scrub_output": self.scrub_output,
+            "audit_log": self.audit_log,
+            "sandbox": self.sandbox + (f" ({self.sandbox_image})" if self.sandbox == "docker" else ""),
         }

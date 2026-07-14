@@ -24,6 +24,20 @@ def _cmd_serve(config: Config) -> int:
     return 0
 
 
+def _cmd_stdio(config: Config) -> int:
+    """Serve the same tool surface over stdio for local MCP clients (Claude
+    Desktop, IDE extensions, etc.). No network, so no security middleware — the
+    OS process boundary is the trust boundary."""
+    from .context import HarnessServer
+    from .server import build_mcp
+
+    server = HarnessServer(config)
+    mcp = build_mcp(config, server)
+    print(f"chatgpt-code-harness (stdio) | mode: {config.mode} | sandbox: {config.sandbox}", file=sys.stderr)
+    mcp.run(transport="stdio")
+    return 0
+
+
 def _tailnet_dnsname() -> str | None:
     import json
     import subprocess
@@ -71,14 +85,24 @@ def _cmd_doctor(config: Config) -> int:
         exists = root.exists()
         ok = ok and exists
         print(f"  [{'ok' if exists else 'MISSING'}] workspace root: {root}")
-    for tool in ("git", "rg", "tailscale"):
+    checked_tools = ["git", "rg", "tailscale"]
+    if config.sandbox == "docker":
+        checked_tools.append("docker")
+    for tool in checked_tools:
         found = shutil.which(tool)
         note = found or "not found"
         if tool == "tailscale" and not found:
             note += " (needed only to expose to ChatGPT)"
         elif tool == "rg" and not found:
             note += " (grep falls back to pure Python)"
-        print(f"  [{'ok' if found else 'warn'}] {tool}: {note}")
+        elif tool == "docker" and not found:
+            note += " (REQUIRED: HARNESS_SANDBOX=docker but docker is missing)"
+        docker_missing = tool == "docker" and not found
+        if docker_missing:
+            ok = False
+        print(f"  [{'ok' if found else ('MISSING' if docker_missing else 'warn')}] {tool}: {note}")
+    print(f"  [ok] output scrubbing: {'on' if config.scrub_output else 'OFF'}")
+    print(f"  [ok] execution backend: {config.sandbox}")
     print(f"  [ok] state dir: {config.state_dir}")
     print(f"  [{'ok' if config.bearer_token else 'warn'}] bearer token: "
           f"{'set' if config.bearer_token else 'not set (secret route is the gate)'}")
@@ -90,7 +114,8 @@ def _cmd_doctor(config: Config) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="harness", description="ChatGPT code harness MCP server")
     sub = parser.add_subparsers(dest="command")
-    sub.add_parser("serve", help="run the MCP server (default)")
+    sub.add_parser("serve", help="run the MCP server over HTTP (default; for ChatGPT)")
+    sub.add_parser("stdio", help="run the MCP server over stdio (for local MCP clients)")
     sub.add_parser("doctor", help="validate config and environment")
     sub.add_parser("url", help="print the MCP endpoint URLs")
     args = parser.parse_args(argv)
@@ -99,6 +124,8 @@ def main(argv: list[str] | None = None) -> int:
     command = args.command or "serve"
     if command == "serve":
         return _cmd_serve(config)
+    if command == "stdio":
+        return _cmd_stdio(config)
     if command == "url":
         return _cmd_url(config)
     if command == "doctor":

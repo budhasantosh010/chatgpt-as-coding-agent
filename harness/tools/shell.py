@@ -1,21 +1,12 @@
-"""Shell tool: run a command in the configured shell, workspace as default cwd."""
+"""Shell tool: run a command via the session's executor, workspace as default cwd."""
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 from ..context import HarnessContext
-from ..proc import run_subprocess
+from ..executor import LocalExecutor
 from ..security import assert_command_allowed
-
-
-def _shell_argv(config_shell: str, command: str) -> list[str]:
-    if config_shell:
-        return [config_shell, "-c", command]
-    if sys.platform == "win32":
-        return ["powershell", "-NoProfile", "-NonInteractive", "-Command", command]
-    return ["/bin/bash", "-lc", command]
 
 
 async def run_command(
@@ -33,10 +24,12 @@ async def run_command(
     if not work.is_dir():
         work = work.parent
 
-    argv = _shell_argv(hc.config.shell, command)
     timeout = max(1, min(timeout, 600))
+    # Route through the configured execution backend (local shell by default,
+    # optional Docker sandbox). Fall back to local if none was injected (tests).
+    executor = getattr(hc, "executor", None) or LocalExecutor(hc.config.shell)
 
-    result = await run_subprocess(argv, cwd=str(work), timeout=timeout)
+    result = await executor.run(command, work, timeout)
     if result.timed_out:
         hc.log("run_command", command=command, result=f"timeout after {timeout}s")
         return f"[timed out after {timeout}s]\ncwd: {work}\ncommand: {command}"

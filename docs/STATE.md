@@ -24,10 +24,13 @@ harness/
   policy.py       Capability {READ,WRITE,EXECUTE} + PermissionPolicy (the one mode table)
   security.py     path confinement / secret-file denylist / command denylist
   session.py      per-workspace event journal (resume)
-  proc.py         one async subprocess impl (env-aware, non-blocking)
+  proc.py         one async subprocess impl (env-aware, non-blocking) + shell_argv
   processes.py    ProcessManager for long-running background processes
+  executor.py     Executor port: LocalExecutor (default) / DockerExecutor (sandbox)
+  hooks.py        HookManager: pre/post-tool hooks (audit, scrub, future policy)
+  scrub.py        redact secret formats from tool output (a post-tool hook)
   middleware.py   pure-ASGI security shell (secret route, Host/Origin, bearer, rate limit)
-  server.py       FastMCP: per-session ctx + thin typed tool wrappers + capability gate
+  server.py       FastMCP: per-session ctx + thin typed tool wrappers + capability + hooks
   tools/          files search shell workspace git memory skills todos process worktree
 ```
 
@@ -36,7 +39,7 @@ HarnessContext; each MCP tool is one thin wrapper declaring a capability. Adding
 a tool = one function + one wrapper. Adding a permission mode = edit policy.py
 only. Nothing else changes.
 
-## Status: 29 tools, 66 tests, verified end-to-end
+## Status: 29 tools, 87 tests, verified end-to-end (HTTP + stdio)
 
 **Done — Tier 0 (foundations):** per-session isolation (HarnessServer +
 SessionStore; concurrent ChatGPT conversations no longer corrupt each other).
@@ -51,11 +54,30 @@ SessionStore; concurrent ChatGPT conversations no longer corrupt each other).
 - ergonomics: glob noise-filter (skips node_modules), auto-detected project commands
 - git safety: git_diff, create/list/restore_checkpoint (private ref, no branch pollution)
 
-**Roadmap — Tier 2/3 (not built):**
-- container/OS sandbox for run_command (the real answer to prompt-injection; denylist is only a backstop)
-- secret-content scrubbing (block secrets inside normal files, not just secret filenames)
-- second transport (stdio) for non-ChatGPT clients
-- hooks / lifecycle events (pre/post tool)
+**Done — Tier 2/3 (hardening & extensibility):**
+- lifecycle hooks (`hooks.py`): pre/post-tool hooks around every call, wired in
+  server `_call` via `fn.__name__` + `hc.key` (zero churn to the 29 wrappers). A
+  pre-hook may veto (HookVeto); a post-hook may transform output. This is the
+  extensibility backbone — new cross-cutting policy = register a hook.
+- secret-content scrubbing (`scrub.py`): a post-tool hook redacts known
+  credential formats (AWS/GitHub/OpenAI/Anthropic/Slack/Stripe/JWT/PEM keys…)
+  from ALL tool output before it reaches ChatGPT. Toggle `HARNESS_SCRUB_OUTPUT`.
+- audit log: a pre-tool hook appends every call to `state_dir/audit.jsonl`
+  (what ChatGPT did, when, in which session). Toggle `HARNESS_AUDIT_LOG`.
+- pluggable execution backend (`executor.py`): `Executor` port with
+  `LocalExecutor` (default, dependency-free) and opt-in `DockerExecutor`
+  (`HARNESS_SANDBOX=docker`) that runs commands in a throwaway container with
+  only the workspace mounted and networking off. `spawn_argv` is the single seam
+  both run_command AND start_process use — the sandbox has no silent hole.
+- stdio transport: `python -m harness stdio` serves the same tool surface to
+  local MCP clients (Claude Desktop, IDE extensions). No middleware needed — the
+  process boundary is the trust boundary.
+
+**Roadmap — later (not built):**
+- ASK/approval mode: an out-of-band approval channel so `Decision.ASK` becomes
+  usable (per-tool confirmations) — hooks are the natural home.
+- richer sandbox backends (gVisor/Firecracker/remote) — a third Executor class.
+- a tool to query the audit log / session events from within ChatGPT.
 
 ## Key decisions (don't relitigate)
 
@@ -67,16 +89,21 @@ SessionStore; concurrent ChatGPT conversations no longer corrupt each other).
   SecurityMiddleware (with a `.ts.net` wildcard) gate Host/Origin. Also
   `json_response=True` + `stateless_http=True` to match the proven Spectre config.
 - **Secret route** is the primary auth (256-bit path); optional bearer on top.
-- Security is enforced in code, not by trusting the model. It is a denylist
-  backstop, NOT a sandbox — untrusted use needs the Tier-2 container.
+- Security is enforced in code, not by trusting the model. The default `local`
+  backend + command denylist is a backstop, not a sandbox; real isolation is now
+  available via `HARNESS_SANDBOX=docker` (opt-in so the default stays portable).
+- **Extensibility goes through hooks, not wrapper edits.** Cross-cutting concerns
+  (audit, scrub, future approvals) attach in `hooks.py`; the 29 tool wrappers and
+  `policy.py` stay untouched. Adding a tool is still one pure fn + one wrapper.
 
 ## Run & test
 
 ```
 python -m pip install .            # or: pip install -r requirements.txt
 python -m harness doctor           # validate config + environment
-python -m harness serve            # start server on 127.0.0.1:8848
-python -m pytest tests -q          # 66 tests (needs pip install .[dev])
+python -m harness serve            # HTTP server on 127.0.0.1:8848 (for ChatGPT)
+python -m harness stdio            # stdio transport (for local MCP clients)
+python -m pytest tests -q          # 87 tests (needs pip install .[dev])
 ```
 
 See README.md for the full ChatGPT-connector + Tailscale setup.

@@ -10,8 +10,8 @@ import asyncio
 from pathlib import Path
 
 from ..context import HarnessContext
+from ..executor import LocalExecutor
 from ..security import assert_command_allowed
-from .shell import _shell_argv
 
 
 def _require_manager(hc: HarnessContext):
@@ -32,7 +32,8 @@ async def start_process(hc: HarnessContext, command: str, cwd: str | None = None
     if not work.is_dir():
         work = work.parent
 
-    argv = _shell_argv(hc.config.shell, command)
+    executor = getattr(hc, "executor", None) or LocalExecutor(hc.config.shell)
+    argv = executor.spawn_argv(command, str(work))
     mp = await mgr.start(command, argv, str(work))
     hc.log("start_process", id=mp.id, command=command)
 
