@@ -141,11 +141,15 @@ Almost nothing new is needed in the engine. It's a UI over existing primitives.
 ### What each interaction does, exactly
 
 ```
- DROP A FOLDER on "Projects"
-   → cockpit calls roots.add(path) + register_project(path)
-   → ⚠️ roots need a server restart today. Cockpit shows "Restart engine"
-      button (it can restart the 8848 process itself), OR we make roots
-      hot-reloadable for the FILE-backed list only. ← OPEN QUESTION (§7)
+ ADD A PROJECT (button, not drag-drop — corrected 2026-07-15)
+   → ⚠️ HARD FACT: browsers never reveal a dropped folder's absolute path
+     (C:\...), only its contents — and registering a root NEEDS the path.
+     So "drag a folder into the web page" is physically impossible.
+   → Instead: [Add Project] button → the local Python backend opens the
+     NATIVE Windows folder picker → real path → roots.add + register_project.
+     (Dragging FILES into a project still works — that's content upload.)
+   → roots need a server restart today. ✅ DECIDED: cockpit shows a
+     "Restart engine" button (it supervises the 8848 process anyway).
 
  DROP A FILE on "Files"
    → cockpit copies the file into the project folder. Plain file operation.
@@ -230,8 +234,13 @@ process, no Node." A single static HTML+JS page keeps that promise.
        (see the Body decision at the top of this doc).
 
  Q5. DOES THE COCKPIT NEED AUTH?
-     It's localhost-only, so anything on your machine can reach it.
-     Probably fine for a personal tool. Add a token if paranoid.
+     → ✅ DECIDED (2026-07-15): YES — the original "probably fine" answer
+       was WRONG (a blindspot both this doc and GPT missed). Any website
+       you visit can make YOUR browser fire requests at 127.0.0.1:8849
+       (CSRF). With approve/deny and set-mode buttons there, a malicious
+       page could click them for you. Required: a random session token on
+       every state-changing request + strict Origin check + no side
+       effects on simple GET/POST. Localhost alone is not a wall.
 ```
 
 ## 8. What this does NOT give you
