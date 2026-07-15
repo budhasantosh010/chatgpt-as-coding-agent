@@ -3,6 +3,10 @@
 > **New here? Read [docs/MANUAL.md](docs/MANUAL.md) first.** It explains the
 > entire system in plain language with diagrams — what it is, where everything
 > is stored, how permissions work, and how to run it day to day. Start there.
+>
+> Wondering how this compares to Codex / Claude Code / OpenCode / Cursor / Pi?
+> See [docs/COMPARISON.md](docs/COMPARISON.md) — an honest, researched,
+> feature-by-feature matrix including what we're missing.
 
 Code with your **ChatGPT** account the way you code with Claude Code or Codex —
 without draining your Codex allowance. ChatGPT is the reasoning loop; this is a
