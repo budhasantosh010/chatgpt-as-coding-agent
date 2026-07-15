@@ -140,6 +140,11 @@ class Config:
     event_token: str = ""
     # Cockpit (operator GUI) port — localhost-only, NEVER funneled.
     cockpit_port: int = 8849
+    # Run the project's formatter on files after WRITE (checklist 6.2). Off by
+    # default: formatting is a real edit the model didn't ask for.
+    auto_format: bool = False
+    # Enable operator-configured hooks from <state_dir>/hooks.json (Phase 7).
+    user_hooks: bool = True
     # Execution backend for run_command: "local" (host shell) or "docker" (sandbox).
     sandbox: str = "local"
     sandbox_image: str = "python:3.12-slim"
@@ -265,6 +270,8 @@ class Config:
             event_sink=_env("EVENT_SINK", ""),
             event_token=_env("EVENT_TOKEN", ""),
             cockpit_port=_env_int("COCKPIT_PORT", 8849),
+            auto_format=_env_bool("AUTO_FORMAT", False),
+            user_hooks=_env_bool("USER_HOOKS", True),
             sandbox=_env("SANDBOX", "local"),
             sandbox_image=_env("SANDBOX_IMAGE", "python:3.12-slim"),
             sandbox_network=_env("SANDBOX_NETWORK", "none"),

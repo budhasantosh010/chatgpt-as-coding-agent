@@ -248,6 +248,91 @@ def make_telemetry_hook(store) -> PostHook:
     return _telemetry
 
 
+def make_rules_hook() -> PostHook:
+    """Post-hook: when a WRITE touches a path matching a path-scoped rule, append
+    the rule so ChatGPT sees the right guidance at the right moment (checklist
+    6.1). Reads rules fresh each time (cheap; rules change rarely, correctness
+    over caching)."""
+    from .rules import rules_for
+
+    _WRITE_TOOLS = {"write_file", "edit_file", "notebook_edit", "apply_edits"}
+
+    def _rules(call: ToolCall) -> Optional[str]:
+        if call.tool not in _WRITE_TOOLS:
+            return None
+        hc = call.context
+        ws = getattr(hc, "active_workspace", None)
+        if ws is None:
+            return None
+        args = call.args or ()
+        paths: list[str] = []
+        if call.tool == "apply_edits" and args and isinstance(args[0], list):
+            paths = [e.get("path", "") for e in args[0] if isinstance(e, dict)]
+        elif args and isinstance(args[0], str):
+            paths = [args[0]]
+        seen: set[str] = set()
+        blocks: list[str] = []
+        for p in paths:
+            for r in rules_for(ws, p):
+                if r.name not in seen:
+                    seen.add(r.name)
+                    blocks.append(f"📋 Rule '{r.name}' (matches {p}):\n{r.body}")
+        if blocks:
+            return (call.result or "") + "\n\n" + "\n\n".join(blocks)
+        return None
+
+    return _rules
+
+
+def make_autoformat_hook() -> PostHook:
+    """Post-hook: run the project's formatter on a freshly written file
+    (checklist 6.2). Off unless HARNESS_AUTO_FORMAT=true. Best-effort: a missing
+    formatter or a format failure never breaks the write. Detected by extension."""
+    import shutil
+    import subprocess
+
+    _WRITE_TOOLS = {"write_file", "edit_file", "apply_patch"}
+    # extension -> (formatter command builders), first available wins
+    _FMT = {
+        ".py": [("ruff", lambda f: ["ruff", "format", f]),
+                ("black", lambda f: ["black", "-q", f])],
+        ".ts": [("prettier", lambda f: ["prettier", "--write", f])],
+        ".tsx": [("prettier", lambda f: ["prettier", "--write", f])],
+        ".js": [("prettier", lambda f: ["prettier", "--write", f])],
+        ".jsx": [("prettier", lambda f: ["prettier", "--write", f])],
+        ".json": [("prettier", lambda f: ["prettier", "--write", f])],
+        ".rs": [("rustfmt", lambda f: ["rustfmt", f])],
+        ".go": [("gofmt", lambda f: ["gofmt", "-w", f])],
+    }
+
+    def _fmt(call: ToolCall) -> Optional[str]:
+        if call.tool not in _WRITE_TOOLS:
+            return None
+        result = call.result or ""
+        if result.startswith("Error:") or "APPROVAL REQUIRED" in result:
+            return None
+        hc = call.context
+        ws = getattr(hc, "active_workspace", None)
+        args = call.args or ()
+        if ws is None or not args or not isinstance(args[0], str):
+            return None
+        target = (Path(ws) / args[0]) if not Path(args[0]).is_absolute() else Path(args[0])
+        cands = _FMT.get(target.suffix.lower())
+        if not cands or not target.exists():
+            return None
+        for name, build in cands:
+            if shutil.which(name):
+                try:
+                    subprocess.run(build(str(target)), cwd=str(ws), timeout=20,
+                                   capture_output=True)
+                    return result + f"\n[auto-formatted with {name}]"
+                except Exception:  # noqa: BLE001 - formatting is best-effort
+                    return None
+        return None
+
+    return _fmt
+
+
 def make_scrub_hook() -> PostHook:
     """Post-hook: redact known secret formats from tool output before it leaves
     the machine. Returns None (no change) when nothing matched."""

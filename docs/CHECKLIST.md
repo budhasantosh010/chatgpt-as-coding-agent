@@ -111,18 +111,28 @@ the tasks/tools.py surface, so it landed with Phase 0.
       go-to-definition (app.py→lib.py), find-references, symbols, hover.
       Degradation + unsupported-extension paths tested too.
 
-## PHASE 6 — QUALITY
+## PHASE 6 — QUALITY   ✅ built + tested
 
-- [ ] **6.1 path-scoped rules** (rule files loaded only for matching globs).
-- [ ] **6.2 formatter detection + auto-format** post-WRITE hook.
-- [ ] **6.3 formatting telemetry.**
+- [x] **6.1 path-scoped rules** — `harness/rules.py` reads `.harness/rules/*`,
+      `.cursor/rules/*`, `.agents/rules/*` with `globs:` frontmatter; a post-hook
+      surfaces the matching rule on a WRITE to a matching path; open_workspace
+      lists them. `**/`-glob semantics handled. Tested.
+- [x] **6.2 formatter detection + auto-format** — post-WRITE hook runs the
+      detected formatter (ruff/black/prettier/rustfmt/gofmt), off unless
+      `HARNESS_AUTO_FORMAT=true`, best-effort. Tested (off-by-default + runs).
+- [x] **6.3 formatting note** — appends "[auto-formatted with X]" to the result.
 
-## PHASE 7 — CONTROLLED HOOKS (the hard version, deliberately late)
+## PHASE 7 — CONTROLLED HOOKS   ✅ built + tested (the hard, secure version)
 
-- [ ] **7.1 operator-only hook config OUTSIDE the roots** (the model must
-      never be able to edit a hook it triggers).
-- [ ] **7.2 timeout, output cap, env allowlist, sandbox policy.**
-- [ ] **7.3 audit entries + failure policy.**
+- [x] **7.1 operator-only config OUTSIDE roots** — `<state_dir>/hooks.json`
+      (`harness/userhooks.py`); the model's path-gated tools cannot write it.
+      Tested that the path is outside the workspace.
+- [x] **7.2 timeout + output cap + restricted env** — each hook runs with a
+      bounded timeout, 2KB output cap, and the same no-secrets base env as
+      run_command; argv (not shell string).
+- [x] **7.3 failure policy + audit** — a `pre` hook with block_on_failure vetoes
+      the tool on non-zero exit (fail-closed); `post` hooks annotate only; all
+      run through the normal audit/event path. Tested: block, non-block, annotate.
 
 ## PHASE 8 — FORK TASK
 

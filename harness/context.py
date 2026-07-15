@@ -113,6 +113,8 @@ class HarnessServer:
             HookManager,
             make_audit_hook,
             make_autocheckpoint_hook,
+            make_autoformat_hook,
+            make_rules_hook,
             make_scrub_hook,
             make_telemetry_hook,
         )
@@ -138,8 +140,17 @@ class HarnessServer:
             self.hooks.on_pre(make_audit_hook(config.state_dir / "audit.jsonl"))
         if config.auto_checkpoint:
             self.hooks.on_pre(make_autocheckpoint_hook(config.auto_checkpoint_interval))
+        if config.user_hooks:
+            from .userhooks import make_user_post_hook, make_user_pre_hook
+            self.hooks.on_pre(make_user_pre_hook(config))  # may veto (Phase 7)
         # Telemetry BEFORE scrub so it sees the raw (unredacted) result markers.
         self.hooks.on_post(make_telemetry_hook(self.tasks))
+        self.hooks.on_post(make_rules_hook())          # path-scoped rules (6.1)
+        if config.auto_format:
+            self.hooks.on_post(make_autoformat_hook())  # 6.2
+        if config.user_hooks:
+            self.hooks.on_post(make_user_post_hook(config))  # Phase 7 post
+        # Scrub LAST so it redacts secrets from rule bodies / hook output too.
         if config.scrub_output:
             self.hooks.on_post(make_scrub_hook())
         self._sessions: dict[str, HarnessContext] = {}
