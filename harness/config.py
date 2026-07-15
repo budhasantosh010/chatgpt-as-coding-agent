@@ -138,6 +138,8 @@ class Config:
     # events POST to this localhost URL so the cockpit gets a real-time feed.
     event_sink: str = ""
     event_token: str = ""
+    # Cockpit (operator GUI) port — localhost-only, NEVER funneled.
+    cockpit_port: int = 8849
     # Execution backend for run_command: "local" (host shell) or "docker" (sandbox).
     sandbox: str = "local"
     sandbox_image: str = "python:3.12-slim"
@@ -262,6 +264,7 @@ class Config:
             arbitrary_commands=_env("ARBITRARY_COMMANDS", "ask"),
             event_sink=_env("EVENT_SINK", ""),
             event_token=_env("EVENT_TOKEN", ""),
+            cockpit_port=_env_int("COCKPIT_PORT", 8849),
             sandbox=_env("SANDBOX", "local"),
             sandbox_image=_env("SANDBOX_IMAGE", "python:3.12-slim"),
             sandbox_network=_env("SANDBOX_NETWORK", "none"),

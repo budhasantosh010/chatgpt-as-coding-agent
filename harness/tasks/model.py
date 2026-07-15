@@ -72,6 +72,12 @@ class Task(BaseModel):
     test_results: list = Field(default_factory=list)
     checkpoints: list[str] = Field(default_factory=list)
     blockers: list[str] = Field(default_factory=list)
+    # Files the operator pinned to this task in the cockpit (drag-drop). Surfaced
+    # in task_status so ChatGPT reads them itself; also the "attach a file" UX.
+    pinned_files: list[str] = Field(default_factory=list)
+    # Optional link back to the ChatGPT conversation driving this task (operator
+    # pastes it in the cockpit). The harness never controls ChatGPT's sidebar.
+    chat_url: str = ""
     result: str | None = None
     created: str = ""
     updated: str = ""

@@ -12,6 +12,7 @@ dependencies = [
     "uvicorn>=0.30",
     "starlette>=0.40",
     "anyio>=4.0",
+    "pydantic>=2.0",
 ]
 
 [project.optional-dependencies]
@@ -24,6 +25,10 @@ harness = "harness.__main__:main"
 # was) can never be silently missing from the wheel again.
 [tool.setuptools.packages.find]
 include = ["harness*"]
+
+# Ship the cockpit's static assets inside the wheel (checklist 4.4).
+[tool.setuptools.package-data]
+"harness.cockpit" = ["static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

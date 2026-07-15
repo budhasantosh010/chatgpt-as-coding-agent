@@ -26,6 +26,14 @@ def _cmd_serve(config: Config) -> int:
     return 0
 
 
+def _cmd_up(config: Config) -> int:
+    """Launch the operator cockpit (localhost GUI) + the engine as a child.
+    One command: projects, sessions, modes, live activity, approvals, diffs."""
+    from .cockpit.supervisor import run_supervisor
+
+    return run_supervisor(config)
+
+
 def _cmd_stdio(config: Config) -> int:
     """Serve the same tool surface over stdio for local MCP clients (Claude
     Desktop, IDE extensions, etc.). No network, so no security middleware — the
@@ -391,6 +399,7 @@ def _cmd_roots(config: Config, action: str, path: str | None) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="harness", description="ChatGPT code harness MCP server")
     sub = parser.add_subparsers(dest="command")
+    sub.add_parser("up", help="launch the cockpit GUI + engine (the one-command operator console)")
     sub.add_parser("serve", help="run the MCP server over HTTP (default; for ChatGPT)")
     sub.add_parser("stdio", help="run the MCP server over stdio (for local MCP clients)")
     sub.add_parser("doctor", help="validate config and environment")
@@ -419,6 +428,8 @@ def main(argv: list[str] | None = None) -> int:
 
     config = Config.from_env()
     command = args.command or "serve"
+    if command == "up":
+        return _cmd_up(config)
     if command == "serve":
         return _cmd_serve(config)
     if command == "stdio":
