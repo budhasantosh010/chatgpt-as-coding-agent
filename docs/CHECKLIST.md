@@ -100,12 +100,16 @@ the tasks/tools.py surface, so it landed with Phase 0.
 - [x] **4.4 static frontend packaged** with the wheel — verified the .whl
       contains harness/cockpit/static/*.
 
-## PHASE 5 — LSP
+## PHASE 5 — LSP   ✅ built + tested against a real language server
 
-- [ ] **5.1 TypeScript/JavaScript** language server integration.
-- [ ] **5.2 Python** language server integration.
-- [ ] **5.3 tools**: definition, references, hover, workspace symbols,
-      diagnostics.
+- [x] **5.1/5.2 language servers** — `harness/lsp.py`: JSON-RPC/stdio client,
+      one server per (root, language), auto-detects pyright/pylsp/
+      typescript-language-server/rust-analyzer/gopls; graceful install-hint when
+      none present. Reused + shut down with the server.
+- [x] **5.3 tools** — `lsp_definition / lsp_references / lsp_hover /
+      lsp_symbols` (MCP tools). VERIFIED for real with pylsp: cross-file
+      go-to-definition (app.py→lib.py), find-references, symbols, hover.
+      Degradation + unsupported-extension paths tested too.
 
 ## PHASE 6 — QUALITY
 

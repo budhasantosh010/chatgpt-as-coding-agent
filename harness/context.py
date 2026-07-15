@@ -47,6 +47,7 @@ class HarnessContext:
         self.executor = executor    # shared Executor backend (may be None in tests)
         self.hooks = hooks          # shared HookManager (may be None in tests)
         self.store = store          # shared TaskStore (for approvals; may be None)
+        self.lsp = None             # shared LSPManager (set by HarnessServer)
 
     # ---- workspace ----------------------------------------------------------
 
@@ -119,12 +120,14 @@ class HarnessServer:
         from .tasks.store import TaskStore
 
         from .events import EventBus, make_event_hook
+        from .lsp import LSPManager
 
         self.config = config
         self.processes = ProcessManager()
         self.executor = build_executor(config)
         self.tasks = TaskStore(config.state_dir / "tasks.db")
         self.federation = FederationManager(config.mcp_servers)
+        self.lsp = LSPManager()
         self.hooks = HookManager()
         # Live event bus: cockpit feed (via the optional supervisor sink) +
         # replayable ring buffer. Registered first so every call is seen even if
@@ -149,6 +152,7 @@ class HarnessServer:
                 self.config, key=key, processes=self.processes,
                 executor=self.executor, hooks=self.hooks, store=self.tasks,
             )
+            ctx.lsp = self.lsp
             # The no-task fallback is a SHARED session (stateless HTTP can't tell
             # conversations apart), so it must not inherit the operator's mode.
             # Default read_only: reads work, mutations require starting a task.
@@ -171,6 +175,7 @@ class HarnessServer:
                 self.config, key=key, processes=self.processes,
                 executor=self.executor, hooks=self.hooks, store=self.tasks,
             )
+            ctx.lsp = self.lsp
             self._sessions[key] = ctx
         # (Re)bind to the task's current workspace + permission mode each call, so
         # a resumed task restores its state even after a restart.

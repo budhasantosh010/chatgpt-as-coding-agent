@@ -32,6 +32,7 @@ def build_asgi_app(config: Config):
                 yield
             finally:
                 await server.processes.shutdown_all()
+                server.lsp.shutdown_all()
 
     app.router.lifespan_context = lifespan
     app.add_middleware(SecurityMiddleware, config=config)

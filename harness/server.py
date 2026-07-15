@@ -19,8 +19,8 @@ from .policy import Capability, Decision
 from .scrub import scrub_text
 from .security import SecurityError
 from .tools import (
-    diagnostics, files, git, images, memory, notebook, process, repomap,
-    search, shell, skills, vcs, workspace, worktree,
+    codeintel, diagnostics, files, git, images, memory, notebook, process,
+    repomap, search, shell, skills, vcs, workspace, worktree,
 )
 from .tools import todos as todos_tool
 from .tasks import tools as tasktools
@@ -443,6 +443,35 @@ def build_mcp(config: Config, server: HarnessServer) -> FastMCP:
         without reading everything."""
         hc = server.context_for(task_id, _session_key(ctx))
         return await _call(hc, Capability.READ, repomap.repo_map, path)
+
+    @mcp.tool()
+    async def lsp_definition(path: str, line: int, character: int = 0, task_id: str | None = None, ctx: Context = None) -> str:
+        """Go to definition: where is the symbol at path:line:character DEFINED?
+        Real code intelligence via a language server (exact, not text search).
+        line is 1-based. Needs a language server installed (python/ts/js/rust/go)."""
+        hc = server.context_for(task_id, _session_key(ctx))
+        return await _call(hc, Capability.READ, codeintel.lsp_definition, path, line, character)
+
+    @mcp.tool()
+    async def lsp_references(path: str, line: int, character: int = 0, task_id: str | None = None, ctx: Context = None) -> str:
+        """Find all references: every place that USES the symbol at
+        path:line:character. line is 1-based. Use before renaming/changing an API."""
+        hc = server.context_for(task_id, _session_key(ctx))
+        return await _call(hc, Capability.READ, codeintel.lsp_references, path, line, character)
+
+    @mcp.tool()
+    async def lsp_hover(path: str, line: int, character: int = 0, task_id: str | None = None, ctx: Context = None) -> str:
+        """Hover info: the type/signature/doc of the symbol at path:line:character
+        (1-based line). Answers 'what type is this' without reading the source."""
+        hc = server.context_for(task_id, _session_key(ctx))
+        return await _call(hc, Capability.READ, codeintel.lsp_hover, path, line, character)
+
+    @mcp.tool()
+    async def lsp_symbols(path: str, task_id: str | None = None, ctx: Context = None) -> str:
+        """Document symbols: the classes/functions/methods declared in a file,
+        with line numbers — a precise outline from the language server."""
+        hc = server.context_for(task_id, _session_key(ctx))
+        return await _call(hc, Capability.READ, codeintel.lsp_symbols, path)
 
     # ---- review + safety net (git) -----------------------------------------
 
