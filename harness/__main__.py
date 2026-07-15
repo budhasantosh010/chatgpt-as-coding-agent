@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -214,6 +215,61 @@ def _cmd_worktrees(config: Config, action: str) -> int:
     return 0
 
 
+def _cmd_roots(config: Config, action: str, path: str | None) -> int:
+    """Manage approved workspace roots (state_dir/roots.json). Operator-only —
+    there is no MCP tool for this, and roots.json lives outside every workspace
+    root, so the model cannot grant itself new folders. Restart to apply."""
+    import json as _json
+
+    roots_file = Config._roots_file(config.state_dir)
+    current = Config.load_extra_roots(config.state_dir)
+
+    if action == "list":
+        env_roots = [str(r) for r in config.workspace_roots]
+        print("Active workspace roots (env + roots.json + defaults):")
+        for r in env_roots:
+            print(f"  {r}")
+        print(f"\nroots.json ({roots_file}):")
+        for r in current:
+            print(f"  {r}")
+        if not current:
+            print("  (none — add one with: python -m harness roots add <path>)")
+        return 0
+
+    if not path:
+        print(f"Usage: python -m harness roots {action} <path>")
+        return 2
+    resolved = str(Path(path).expanduser())
+
+    if action == "add":
+        if not Path(resolved).is_dir():
+            print(f"Not a directory (create it first): {resolved}")
+            return 1
+        real = os.path.realpath(resolved)
+        if real in current:
+            print(f"Already an approved root: {real}")
+            return 0
+        current.append(real)
+        roots_file.write_text(_json.dumps(current, indent=2), encoding="utf-8")
+        print(f"Added workspace root: {real}")
+        print("Restart the server (run.ps1) to apply.")
+        return 0
+
+    if action == "remove":
+        real = os.path.realpath(resolved)
+        remaining = [r for r in current if r not in (resolved, real)]
+        if len(remaining) == len(current):
+            print(f"Not in roots.json: {resolved}")
+            return 1
+        roots_file.write_text(_json.dumps(remaining, indent=2), encoding="utf-8")
+        print(f"Removed workspace root: {resolved}")
+        print("Restart the server to apply.")
+        return 0
+
+    print("Usage: python -m harness roots [list|add|remove] <path>")
+    return 2
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="harness", description="ChatGPT code harness MCP server")
     sub = parser.add_subparsers(dest="command")
@@ -230,6 +286,9 @@ def main(argv: list[str] | None = None) -> int:
     tp.add_argument("mode", nargs="?", default=None)
     wp = sub.add_parser("worktrees", help="prune worktrees of finished tasks")
     wp.add_argument("action", nargs="?", choices=["prune"], default="prune")
+    rp = sub.add_parser("roots", help="manage approved workspace roots (list/add/remove)")
+    rp.add_argument("action", nargs="?", choices=["list", "add", "remove"], default="list")
+    rp.add_argument("path", nargs="?", default=None)
     args = parser.parse_args(argv)
 
     config = Config.from_env()
@@ -248,6 +307,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_tasks(config, args.action, args.task_id, args.mode)
     if command == "worktrees":
         return _cmd_worktrees(config, args.action)
+    if command == "roots":
+        return _cmd_roots(config, args.action, args.path)
     parser.print_help()
     return 2
 

@@ -203,6 +203,26 @@ class Config:
     def local_url(self) -> str:
         return f"http://{self.host}:{self.port}{self.mcp_path}"
 
+    @staticmethod
+    def _roots_file(state_dir: Path) -> Path:
+        return Path(state_dir).expanduser() / "roots.json"
+
+    @classmethod
+    def load_extra_roots(cls, state_dir: Path) -> list[str]:
+        """Operator-added workspace roots persisted by `harness roots add`. Kept
+        in the state dir (outside every workspace root), so the model's
+        path-gated tools can't write it — only the local CLI can."""
+        import json as _json
+
+        f = cls._roots_file(state_dir)
+        if not f.exists():
+            return []
+        try:
+            data = _json.loads(f.read_text(encoding="utf-8"))
+            return [str(p) for p in data] if isinstance(data, list) else []
+        except (ValueError, OSError):
+            return []
+
     @classmethod
     def from_env(cls, *, load_dotenv: bool = True) -> "Config":
         if load_dotenv:
@@ -247,8 +267,15 @@ class Config:
         state_dir = _env("STATE_DIR")
         if state_dir:
             kwargs["state_dir"] = Path(state_dir).expanduser()
-        if roots_raw:
-            kwargs["workspace_roots"] = [Path(p) for p in _split_list(roots_raw, sep="pathsep")]
+        # Workspace roots come from HARNESS_WORKSPACE_ROOTS (env) AND the
+        # operator-managed roots.json in the state dir (the `harness roots` CLI),
+        # merged. roots.json lets you add a folder without editing launch-cwd env.
+        resolved_state = kwargs.get("state_dir") or _default_state_dir()
+        env_roots = _split_list(roots_raw, sep="pathsep") if roots_raw else []
+        file_roots = cls.load_extra_roots(resolved_state)
+        merged_roots = env_roots + [r for r in file_roots if r not in env_roots]
+        if merged_roots:
+            kwargs["workspace_roots"] = [Path(p) for p in merged_roots]
         if origins_raw:
             kwargs["allowed_origins"] = _split_list(origins_raw, sep=",")
         if hosts_raw:
