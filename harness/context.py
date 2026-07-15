@@ -118,12 +118,19 @@ class HarnessServer:
         from .processes import ProcessManager
         from .tasks.store import TaskStore
 
+        from .events import EventBus, make_event_hook
+
         self.config = config
         self.processes = ProcessManager()
         self.executor = build_executor(config)
         self.tasks = TaskStore(config.state_dir / "tasks.db")
         self.federation = FederationManager(config.mcp_servers)
         self.hooks = HookManager()
+        # Live event bus: cockpit feed (via the optional supervisor sink) +
+        # replayable ring buffer. Registered first so every call is seen even if
+        # a later pre-hook vetoes it.
+        self.events = EventBus(config.event_sink, config.event_token)
+        self.hooks.on_pre(make_event_hook(self.events))
         if config.audit_log:
             self.hooks.on_pre(make_audit_hook(config.state_dir / "audit.jsonl"))
         if config.auto_checkpoint:

@@ -128,11 +128,25 @@ def test_finish_requires_evidence_when_criteria_set(taskctx):
 def test_finish_accepts_recorded_test_results(taskctx):
     srv, tid, hc, ws = taskctx
     tasktools.set_acceptance_criteria(srv, tid, ["tests pass"])
-    run(_call(hc, Capability.EXECUTE, shell.run_command, "pytest --version", None, 60))
+    # Record a PASSING test run (checklist 0.1: only a passing run is evidence).
+    task = srv.tasks.get_task(tid)
+    task.test_results = [{"command": "pytest", "passed": True}]
+    srv.tasks.save_task(task)
     _to_review_ready(srv, tid)
     out = tasktools.finish_task(srv, tid, "done")
-    assert "completed" in out
     assert srv.tasks.get_task(tid).status is TaskState.COMPLETED
+
+
+def test_finish_rejects_recorded_failing_test(taskctx):
+    srv, tid, hc, ws = taskctx
+    tasktools.set_acceptance_criteria(srv, tid, ["tests pass"])
+    task = srv.tasks.get_task(tid)
+    task.test_results = [{"command": "pytest", "passed": False}]
+    srv.tasks.save_task(task)
+    _to_review_ready(srv, tid)
+    out = tasktools.finish_task(srv, tid, "done", evidence="ignore the red")
+    assert "Not completed" in out
+    assert srv.tasks.get_task(tid).status is TaskState.REVIEW_READY
 
 
 def test_finish_accepts_explicit_evidence(taskctx):

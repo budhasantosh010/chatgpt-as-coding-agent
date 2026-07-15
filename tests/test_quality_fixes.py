@@ -27,9 +27,10 @@ def taskctx(tmp_path):
     cfg = Config(workspace_roots=[tmp_path], state_dir=tmp_path / "state",
                  secret_route="x")
     srv = HarnessServer(cfg)
+    # Non-git tmp folder → shared checkout by default (no worktree, no approval
+    # needed); 'auto' is enough here.
     tid = run(tasktools.start_task(srv, str(ws), goal="g",
-                                   permission_mode="auto_workspace",
-                                   isolation="workspace")).split()[2]
+                                   permission_mode="auto_workspace")).split()[2]
     hc = srv.context_for(tid, "conn")
     yield srv, tid, hc, ws
     srv.tasks.close()

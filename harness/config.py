@@ -129,9 +129,15 @@ class Config:
     # repo hooks are repo-controlled code executing on the host.
     commit_hooks: bool = False
     # In auto_workspace mode, what happens to commands the classifier does NOT
-    # recognize: "allow" (default; the classifier is advisory) or "ask" (fail
-    # closed — anything unrecognized needs operator approval).
-    arbitrary_commands: str = "allow"
+    # recognize: "ask" (default; fail closed — anything unrecognized needs a
+    # one-shot operator approval, or a remembered per-project approval via
+    # `harness commands allow`) or "allow" (the classifier is advisory only).
+    # The positive SAFE tier (pytest/npm test/linters/local git…) always runs.
+    arbitrary_commands: str = "ask"
+    # Live-event push sink (set by the supervisor when it spawns the engine):
+    # events POST to this localhost URL so the cockpit gets a real-time feed.
+    event_sink: str = ""
+    event_token: str = ""
     # Execution backend for run_command: "local" (host shell) or "docker" (sandbox).
     sandbox: str = "local"
     sandbox_image: str = "python:3.12-slim"
@@ -253,7 +259,9 @@ class Config:
             auto_checkpoint=_env_bool("AUTO_CHECKPOINT", True),
             auto_checkpoint_interval=_env_int("AUTO_CHECKPOINT_INTERVAL", 60),
             commit_hooks=_env_bool("COMMIT_HOOKS", False),
-            arbitrary_commands=_env("ARBITRARY_COMMANDS", "allow"),
+            arbitrary_commands=_env("ARBITRARY_COMMANDS", "ask"),
+            event_sink=_env("EVENT_SINK", ""),
+            event_token=_env("EVENT_TOKEN", ""),
             sandbox=_env("SANDBOX", "local"),
             sandbox_image=_env("SANDBOX_IMAGE", "python:3.12-slim"),
             sandbox_network=_env("SANDBOX_NETWORK", "none"),

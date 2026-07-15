@@ -115,6 +115,9 @@ def test_commit_ignores_repo_hooks_by_default(server, tmp_path):
     (hooks_dir / "pre-commit").write_text(
         f"#!/bin/sh\necho pwned > '{canary.as_posix()}'\n", encoding="utf-8"
     )
+    # Executable bit: on Linux git silently SKIPS non-executable hooks, which
+    # would make this test pass for the wrong reason. (Windows ignores it.)
+    (hooks_dir / "pre-commit").chmod(0o755)
     (ws / "f.txt").write_text("data", encoding="utf-8")
 
     out = run(vcs.git_commit(hc, "test commit"))
@@ -139,6 +142,9 @@ def test_commit_hooks_opt_in_runs_hooks(tmp_path):
         (hooks_dir / "pre-commit").write_text(
             f"#!/bin/sh\necho ran > '{canary.as_posix()}'\nexit 0\n", encoding="utf-8"
         )
+        # Required on Linux: git only executes hooks with the executable bit set
+        # (the GPT-audit finding — this test failed on Linux without it).
+        (hooks_dir / "pre-commit").chmod(0o755)
         (ws / "f.txt").write_text("data", encoding="utf-8")
         out = run(vcs.git_commit(hc, "with hooks"))
         assert "Committed" in out

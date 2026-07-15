@@ -74,9 +74,12 @@ def _cmd_url(config: Config) -> int:
     return 0
 
 
-def _cmd_approvals(config: Config, action: str, approval_id: str | None) -> int:
+def _cmd_approvals(config: Config, action: str, approval_id: str | None,
+                   remember: bool = False) -> int:
     """Operator-only approval queue for build_ask / auto_workspace modes.
-    ChatGPT can *request* an action; only this local CLI can grant it."""
+    ChatGPT can *request* an action; only this local CLI can grant it.
+    `approve --remember` additionally persists the exact command to the
+    per-project allowlist so it never asks again (checklist 0.7)."""
     from .tasks.store import TaskStore
 
     store = TaskStore(config.state_dir / "tasks.db")
@@ -87,16 +90,63 @@ def _cmd_approvals(config: Config, action: str, approval_id: str | None) -> int:
             return 0
         print("Pending approvals:")
         for a in pending:
-            print(f"  {a['id']}  task={a['task_id']}  [{a['action']}]  {a['detail']}")
-        print("\nApprove with: python -m harness approvals approve <id>")
+            print(f"  {a['id']}  task={a['task_id']}  [{a['action']}]  {a['detail'][:120]}")
+        print("\nApprove with: python -m harness approvals approve <id>"
+              "  (add --remember to always allow this exact command in the project)")
         return 0
     if not approval_id:
         print(f"Usage: python -m harness approvals {action} <approval_id>")
         return 2
+    approval = store.get_approval(approval_id)
     status = "approved" if action == "approve" else "denied"
     ok = store.decide_approval(approval_id, status)
     print(f"{status.capitalize()} {approval_id}." if ok else f"{approval_id}: not found or already decided.")
+    if ok and remember and action == "approve" and approval:
+        if approval["action"] != "command_arbitrary":
+            print("--remember only applies to command approvals; ignored.")
+            return 0
+        task = store.get_task(approval["task_id"])
+        detail = approval.get("detail") or ""
+        cmd = detail.split(": ", 1)[1] if ": " in detail else detail
+        if task is None or not cmd:
+            print("--remember: could not resolve the task/command; ignored.")
+            return 0
+        from . import allowlist
+
+        saved = allowlist.allow(config.state_dir, task.workspace_path, cmd)
+        print(f"Remembered for {task.workspace_path}:\n  {saved}")
     return 0 if ok else 1
+
+
+def _cmd_commands(config: Config, action: str, path: str | None, command: str | None) -> int:
+    """Operator-only per-project command allowlist (state_dir/allowed_commands.json).
+    Exact-match commands that run without asking under ARBITRARY_COMMANDS=ask."""
+    from . import allowlist
+
+    if action == "list":
+        data = allowlist.load(config.state_dir)
+        if not data:
+            print("No remembered commands. Add one with:\n"
+                  '  python -m harness commands allow <project_path> "<command>"')
+            return 0
+        for ws, cmds in data.items():
+            print(f"{ws}:")
+            for c in cmds:
+                print(f"  {c}")
+        return 0
+    if not path or not command:
+        print(f'Usage: python -m harness commands {action} <project_path> "<command>"')
+        return 2
+    if action == "allow":
+        saved = allowlist.allow(config.state_dir, path, command)
+        print(f"Remembered for {path}:\n  {saved}")
+        return 0
+    if action == "revoke":
+        ok = allowlist.revoke(config.state_dir, path, command)
+        print("Revoked." if ok else "Not found in the allowlist.")
+        return 0 if ok else 1
+    print("Usage: python -m harness commands [list|allow|revoke] <project_path> \"<command>\"")
+    return 2
 
 
 def _cmd_doctor(config: Config) -> int:
@@ -348,6 +398,12 @@ def main(argv: list[str] | None = None) -> int:
     ap = sub.add_parser("approvals", help="operator approval queue (list/approve/deny)")
     ap.add_argument("action", nargs="?", choices=["list", "approve", "deny"], default="list")
     ap.add_argument("approval_id", nargs="?", default=None)
+    ap.add_argument("--remember", action="store_true",
+                    help="on approve: always allow this exact command in the project")
+    cp = sub.add_parser("commands", help="per-project remembered command allowlist")
+    cp.add_argument("action", nargs="?", choices=["list", "allow", "revoke"], default="list")
+    cp.add_argument("path", nargs="?", default=None)
+    cp.add_argument("cmd", nargs="?", default=None)
     tp = sub.add_parser("tasks", help="see tasks + their modes (list), or elevate one (set-mode)")
     tp.add_argument("action", nargs="?", choices=["list", "set-mode"], default="list")
     tp.add_argument("task_id", nargs="?", default=None)
@@ -372,7 +428,10 @@ def main(argv: list[str] | None = None) -> int:
     if command == "doctor":
         return _cmd_doctor(config)
     if command == "approvals":
-        return _cmd_approvals(config, args.action, args.approval_id)
+        return _cmd_approvals(config, args.action, args.approval_id,
+                              getattr(args, "remember", False))
+    if command == "commands":
+        return _cmd_commands(config, args.action, args.path, args.cmd)
     if command == "tasks":
         return _cmd_tasks(config, args.action, args.task_id, args.mode)
     if command == "watch":

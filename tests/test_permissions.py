@@ -21,7 +21,10 @@ def run(c):
 # --- command classification ------------------------------------------------
 
 def test_classify_commands():
-    assert classify_command("pytest -q") is Action.COMMAND_ARBITRARY
+    # Everyday dev commands are now a positive SAFE tier (checklist 0.6), so
+    # ask-mode doesn't nag about them. Arbitrary = genuinely unrecognized.
+    assert classify_command("pytest -q") is Action.COMMAND_SAFE
+    assert classify_command("some-unknown-binary --flag") is Action.COMMAND_ARBITRARY
     assert classify_command("git push origin main") is Action.GIT_REMOTE_WRITE
     assert classify_command("npm install left-pad") is Action.PACKAGE_INSTALL
     assert classify_command("curl https://evil.com") is Action.NETWORK

@@ -11,37 +11,36 @@ Verification notes for round 3 are at the bottom (§ Verification record).
 
 ## PHASE 0 — MAKE THE BACKEND TRUE (a GUI must not display lies)
 
-- [ ] **0.1 finish_task honesty** — completion requires *passing* evidence:
-      a recorded FAILED test run must not satisfy the evidence check
-      (today `tasks/tools.py:217` checks presence, not success).
-- [ ] **0.2 create_project** — create folder + `git init` + initial commit.
-      ⚠ CONFINED: may only create *inside an existing root* (otherwise it's a
-      path-escape vector). Creating outside roots = cockpit/operator flow only.
-- [ ] **0.3 worktree isolation enforced, not badged** —
-      `isolation="workspace"` becomes an ASK (operator approval via the
-      existing approval machinery), not a silent choice ChatGPT can make;
-      non-git folder → suggest create_project/git init or require approval.
-- [ ] **0.4 fix the Linux hook test** — add `chmod 0o755` to the hook file in
-      `tests/test_terminal_and_hooks_gates.py:139` (confirmed: git skips
-      non-executable hooks on Linux; invisible on Windows).
-- [ ] **0.5 CI matrix** — GitHub Actions: windows-latest + ubuntu-latest;
-      build wheel, install OUTSIDE the source tree, run pytest. Both green at
-      the same commit = cross-platform claims become proof, permanently.
-- [ ] **0.6 COMMAND_SAFE tier** — today NOTHING maps to safe
-      (`permissions.py:44-64`: only risk patterns exist; everything else →
-      ARBITRARY, so ask-mode would nag on `pytest`/`npm test` too). Classify
-      common test/build/run commands + the project commands auto-detected by
-      open_workspace as safe.
-- [ ] **0.7 remembered approvals** — "always allow this exact command in this
-      project", stored OPERATOR-SIDE in state_dir (never in the workspace —
-      the model must not be able to write its own allowlist).
-- [ ] **0.8 flip default to ask** — `HARNESS_ARBITRARY_COMMANDS=ask` becomes
-      the default ONLY after 0.6 + 0.7 exist (before them it's unbearable;
-      after them it's safe AND quiet).
-- [ ] **0.9 structured event bus** — every action emits
-      `{event_id, task_id, type, time, data}` → in-process bus → SSE feed
-      AND audit.jsonl sink. The audit file stays the durable record; the GUI
-      does not tail-parse it as its primary channel.
+- [x] **0.1 finish_task honesty** — a recorded FAILED run can never satisfy
+      completion; only a passing last-run or explicit evidence when no runs
+      exist. `tasks/tools.py finish_task`; tested in test_phase0 +
+      test_task_telemetry (rejects-failing).
+- [x] **0.2 create_project** — `create_project(path, name)`: confined to an
+      existing root, `git init` + README + initial commit, registers it.
+      MCP tool + tested (inits git, refused outside roots, refused non-empty).
+- [x] **0.3 worktree isolation enforced, not badged** —
+      `isolation="workspace"` now returns an ASK (one-shot operator approval)
+      before it runs; `auto` non-git fallback still just flags in the reply.
+      `_shared_checkout_gate`; tested both paths.
+- [x] **0.4 fix the Linux hook test** — `chmod(0o755)` added to both hook
+      writers in test_terminal_and_hooks_gates.py.
+- [x] **0.5 CI matrix** — `.github/workflows/ci.yml`: ubuntu + windows pytest,
+      plus a wheel job importing from outside the source tree.
+- [x] **0.6 COMMAND_SAFE tier** — positive fullmatch tier in permissions.py
+      (pytest/tox/linters/npm test/cargo/go/local git…), metachar-guarded so
+      `pytest; evil` can't ride in. Tested safe vs unsafe.
+- [x] **0.7 remembered approvals** — `harness/allowlist.py` (state-dir, exact,
+      per-project) + `harness commands allow/list/revoke` + `approvals approve
+      --remember`. Gate consults it. Tested end-to-end through `_gate`.
+- [x] **0.8 flip default to ask** — `arbitrary_commands` default now `"ask"`
+      (config.py + doctor confirms). Safe because 0.6/0.7 landed first.
+- [x] **0.9 structured event bus** — `harness/events.py` EventBus
+      ({event_id,time,type,task_id,data}) + ring buffer + `since()` replay +
+      optional HTTP sink; registered as a pre-hook. Tested ids/replay + that
+      real tool calls reach it. audit.jsonl unchanged as the durable sink.
+
+**Bonus this pass:** 8.1 `fork_task` (MCP tool + tested) — small and it shared
+the tasks/tools.py surface, so it landed with Phase 0.
 
 ## PHASE 1 — THE SUPERVISOR (`python -m harness up`)
 
@@ -123,8 +122,8 @@ Verification notes for round 3 are at the bottom (§ Verification record).
 
 ## PHASE 8 — FORK TASK
 
-- [ ] **8.1 fork_task** — copy goal/context, fresh worktree from the same
-      base commit, compare approaches side by side.
+- [x] **8.1 fork_task** — copy goal/criteria/plan, fresh worktree from the same
+      base, compare approaches. Landed early with Phase 0 (MCP tool + tested).
 
 ## LATER (deliberate, not forgotten)
 per-domain network allowlist · git/rg inside the sandbox · native Windows

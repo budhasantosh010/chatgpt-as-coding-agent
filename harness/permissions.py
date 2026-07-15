@@ -57,10 +57,50 @@ _CMD_PATTERNS: tuple[tuple[Action, re.Pattern], ...] = (
 )
 
 
+# ---- positive SAFE tier (checklist 0.6) -------------------------------------
+# Everyday dev commands that auto-run even under HARNESS_ARBITRARY_COMMANDS=ask,
+# so ask-mode gates the unknown without nagging about `pytest`. Safety rules:
+#   * the WHOLE command must match (fullmatch), so `pytest; evil.exe` never
+#     rides in on pytest's back;
+#   * commands containing shell metacharacters (chaining, subshells, redirects)
+#     are never safe-classified — they fall through to ARBITRARY;
+#   * risky patterns above are checked FIRST, so `pip install` stays gated.
+_SHELL_META = re.compile(r"[;&|`$<>{}\n]")
+_SAFE_FULL: tuple[re.Pattern, ...] = tuple(
+    re.compile(p, re.I) for p in (
+        r"(?:python[0-9.]*\s+-m\s+)?pytest(?:\s.*)?",
+        r"python[0-9.]*\s+-m\s+(?:unittest|mypy|ruff|black|isort|flake8|tox|compileall)(?:\s.*)?",
+        r"(?:tox|mypy|ruff|black|isort|flake8|pylint)(?:\s.*)?",
+        r"(?:npm|pnpm|yarn)\s+(?:test|run\s+[\w:.-]+)(?:\s.*)?",
+        r"(?:jest|vitest|tsc|eslint|prettier)(?:\s.*)?",
+        r"cargo\s+(?:test|build|check|clippy|fmt)(?:\s.*)?",
+        r"go\s+(?:test|build|vet|fmt)(?:\s.*)?",
+        r"dotnet\s+(?:test|build)(?:\s.*)?",
+        r"make(?:\s+[\w.-]+)?",
+        r"echo(?:\s.*)?",
+        r"(?:ls|dir|pwd|whoami|Get-ChildItem|Get-Location)(?:\s.*)?",
+    )
+)
+# Local-only git operations (no remote, no hooks risk beyond what gitcmd already
+# neutralizes). Fullmatch + metachar-free, same rules as the safe tier.
+_GIT_LOCAL_FULL = re.compile(
+    r"git\s+(?:-C\s+\S+\s+)?(?:--no-pager\s+)?"
+    r"(?:status|log|diff|show|branch|add|commit|checkout|switch|restore|stash|"
+    r"rev-parse|describe|blame|tag|worktree\s+list)(?:\s.*)?",
+    re.I,
+)
+
+
 def classify_command(command: str) -> Action:
     for action, pat in _CMD_PATTERNS:
         if pat.search(command or ""):
             return action
+    c = (command or "").strip()
+    if c and not _SHELL_META.search(c):
+        if _GIT_LOCAL_FULL.fullmatch(c):
+            return Action.GIT_LOCAL_WRITE
+        if any(p.fullmatch(c) for p in _SAFE_FULL):
+            return Action.COMMAND_SAFE
     return Action.COMMAND_ARBITRARY
 
 

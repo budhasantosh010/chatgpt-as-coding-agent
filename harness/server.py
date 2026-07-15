@@ -145,8 +145,20 @@ def _gate(hc: HarnessContext, capability: Capability | None, tool: str, command:
             f"'{action.value}' is denied in '{hc.policy.mode}' mode. Only the "
             "operator can change the mode locally." + hint
         )
-    # ASK — allow only if the operator has granted a one-shot approval.
+    # ASK — allow only if the operator has granted a one-shot approval, or has
+    # REMEMBERED this exact command for this project (checklist 0.7). The
+    # remembered list lives in the state dir (operator-writable only).
     store = getattr(hc, "store", None)
+    if action is Action.COMMAND_ARBITRARY and command:
+        from . import allowlist
+
+        workspaces = [getattr(hc, "active_workspace", None)]
+        if store is not None and getattr(hc, "task_id", None):
+            t = store.get_task(hc.task_id)
+            if t is not None:
+                workspaces += [t.workspace_path, t.worktree_path]
+        if allowlist.is_allowed(hc.config.state_dir, workspaces, command):
+            return None
     if store is None or not getattr(hc, "task_id", None):
         raise SecurityError(
             f"'{action.value}' needs approval, but this call has no task_id (start a "
@@ -158,7 +170,9 @@ def _gate(hc: HarnessContext, capability: Capability | None, tool: str, command:
     if granted:
         store.consume_approval(granted["id"])
         return None
-    aid = store.add_approval(hc.task_id, action.value, f"{tool}: {request[:120]}", rhash)
+    # Full request text (not truncated): `approvals approve --remember` needs
+    # the exact command to persist it to the per-project allowlist.
+    aid = store.add_approval(hc.task_id, action.value, f"{tool}: {request}", rhash)
     return (
         f"⏸ APPROVAL REQUIRED — '{action.value}' is not auto-allowed in "
         f"'{hc.policy.mode}' mode.\nThe operator must approve on the machine:\n"
@@ -657,6 +671,20 @@ def build_mcp(config: Config, server: HarnessServer) -> FastMCP:
     async def register_project(path: str, name: str = "", ctx: Context = None) -> str:
         """Register a project directory so tasks can be grouped under it."""
         return _task_call(tasktools.register_project, path, name)
+
+    @mcp.tool()
+    async def create_project(path: str, name: str = "", ctx: Context = None) -> str:
+        """Create a NEW project folder (must be inside an approved root), git-init
+        it with an initial commit so task worktrees work from the start, and
+        register it. For existing folders use register_project."""
+        return await _task_call_async(tasktools.create_project, path, name)
+
+    @mcp.tool()
+    async def fork_task(task_id: str, goal: str = "", title: str = "", ctx: Context = None) -> str:
+        """Fork a task: a new task on the same project with its OWN worktree from
+        the same base, copying goal/criteria/plan — try two approaches side by
+        side. The original task is untouched."""
+        return await _task_call_async(tasktools.fork_task, task_id, goal, title)
 
     # ---- federation (consume other MCP servers) ----------------------------
     # Federated tools go through the same permission gate as everything else.

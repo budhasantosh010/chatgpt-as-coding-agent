@@ -84,6 +84,13 @@ def test_two_tasks_same_project_get_disjoint_files(server):
 def test_isolation_workspace_opts_out(server):
     srv, base = server
     ws = _git_repo(srv, base)
+    # checklist 0.3: opting out of worktree isolation needs operator approval.
+    first = run(tasktools.start_task(srv, str(ws), goal="g",
+                                     permission_mode="auto_workspace",
+                                     isolation="workspace"))
+    assert "APPROVAL REQUIRED" in first
+    aid = first.split("approvals approve ")[1].split()[0]
+    assert srv.tasks.decide_approval(aid, "approved")
     tid = _start(srv, ws, isolation="workspace")
     task = srv.tasks.get_task(tid)
     assert task.worktree_path is None

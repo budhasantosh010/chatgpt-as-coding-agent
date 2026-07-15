@@ -1,0 +1,44 @@
+# Checklist 0.5: cross-platform proof. Both OSes green at the same commit is
+# the only thing that settles "does it work on Linux" permanently.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Configure git identity (worktree/commit tests need one)
+        run: |
+          git config --global user.email "ci@harness.local"
+          git config --global user.name "harness-ci"
+      - run: pip install -e .[dev]
+      - run: python -m pytest tests -q
+
+  wheel:
+    # Build the wheel and import it OUTSIDE the source tree — proves the
+    # packaged app is complete (the P1 audit bug class: missing subpackages).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip wheel . --no-deps -w wheelhouse
+      - run: pip install wheelhouse/*.whl
+      - name: Import + doctor from outside the source tree
+        run: |
+          cd /tmp
+          python -c "import harness, harness.tasks, harness.tools"
+          python -m harness doctor || true
