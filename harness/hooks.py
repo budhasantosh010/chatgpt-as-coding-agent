@@ -100,11 +100,21 @@ def make_audit_hook(audit_path: Path) -> PreHook:
     audit_path = Path(audit_path)
 
     def _audit(call: ToolCall) -> None:
+        hc = call.context
+        # Record WHO (task), WHAT (tool + target), and UNDER WHAT POWER (mode) —
+        # enough for `harness watch` to show a live, readable activity feed.
+        detail = ""
+        args = call.args or ()
+        if args and isinstance(args[0], str):
+            detail = args[0][:160]
         record = {
             "time": _now_iso(),
             "session": call.session_key,
+            "task_id": getattr(hc, "task_id", None),
+            "mode": getattr(getattr(hc, "policy", None), "mode", None),
             "tool": call.tool,
             "capability": call.capability.value if call.capability else None,
+            "detail": detail,
         }
         try:
             audit_path.parent.mkdir(parents=True, exist_ok=True)

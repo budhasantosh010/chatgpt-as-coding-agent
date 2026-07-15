@@ -147,14 +147,82 @@ def _cmd_doctor(config: Config) -> int:
     return 0 if ok else 1
 
 
+def _cmd_watch(config: Config, lines: int) -> int:
+    """Live activity feed — the 'CLI moving while ChatGPT works' view. Tails the
+    audit log and prints each tool call as it happens: which task, what mode,
+    which tool, on what. Ctrl+C to stop."""
+    import json as _json
+    import time
+
+    path = config.state_dir / "audit.jsonl"
+    icons = {"read": "READ ", "write": "WRITE", "execute": "EXEC "}
+
+    def show(rec: dict) -> None:
+        t = (rec.get("time") or "")[11:19]
+        cap = icons.get(rec.get("capability") or "", "     ")
+        task = rec.get("task_id") or "(no task)"
+        mode = rec.get("mode") or "?"
+        detail = rec.get("detail") or ""
+        if len(detail) > 60:
+            detail = detail[:57] + "..."
+        # flush: this is a live feed, so it must never sit in a buffer.
+        print(f"{t}  {cap}  [{mode:<14}] {rec.get('tool',''):<18} {detail}   ({task})",
+              flush=True)
+
+    print(f"Watching {path}\n  Ctrl+C to stop. Waiting for ChatGPT activity...\n", flush=True)
+    print(f"{'TIME':<8}  {'WHAT':<5}  {'MODE':<16} {'TOOL':<18} TARGET   (TASK)", flush=True)
+    print("-" * 100, flush=True)
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+    # Show recent history first, then stream new lines as they're appended.
+    with path.open("r", encoding="utf-8", errors="replace") as fh:
+        history = fh.readlines()
+        for line in history[-lines:]:
+            try:
+                show(_json.loads(line))
+            except ValueError:
+                pass
+        fh.seek(0, 2)
+        try:
+            while True:
+                line = fh.readline()
+                if not line:
+                    time.sleep(0.4)
+                    continue
+                try:
+                    show(_json.loads(line))
+                except ValueError:
+                    pass
+        except KeyboardInterrupt:
+            print("\nStopped watching.")
+    return 0
+
+
 def _cmd_tasks(config: Config, action: str, task_id: str | None, mode: str | None) -> int:
     """Operator-only task administration. `set-mode` is the ONLY way to run a
     task above the HARNESS_MAX_MODE ceiling — ChatGPT cannot grant itself
     full/bypass_sandboxed."""
-    from .policy import VALID_MODES, mode_rank
+    from .policy import VALID_MODES, effective_mode, mode_rank
     from .tasks.store import TaskStore
 
     store = TaskStore(config.state_dir / "tasks.db")
+    if action == "list":
+        tasks = store.list_tasks()
+        if not tasks:
+            print("No tasks yet. ChatGPT creates them with start_task.")
+            return 0
+        print(f"{'TASK ID':<14} {'STATE':<12} {'MODE (effective)':<24} GOAL")
+        print("-" * 96)
+        for t in tasks:
+            eff = effective_mode(t.permission_mode, operator_elevated=t.operator_elevated,
+                                 ceiling=config.max_mode, sandbox=config.sandbox)
+            shown = eff if eff == t.permission_mode else f"{eff} (asked {t.permission_mode})"
+            star = "*" if t.operator_elevated else " "
+            print(f"{t.id:<14} {t.status.value:<12} {star}{shown:<23} {(t.title or t.goal)[:40]}")
+        print("\n* = operator-elevated above the ceiling."
+              f"  Server ceiling: {config.max_mode}")
+        return 0
     if action == "set-mode":
         if not task_id or not mode:
             print("Usage: python -m harness tasks set-mode <task_id> <mode>")
@@ -280,10 +348,12 @@ def main(argv: list[str] | None = None) -> int:
     ap = sub.add_parser("approvals", help="operator approval queue (list/approve/deny)")
     ap.add_argument("action", nargs="?", choices=["list", "approve", "deny"], default="list")
     ap.add_argument("approval_id", nargs="?", default=None)
-    tp = sub.add_parser("tasks", help="operator task administration (set-mode)")
-    tp.add_argument("action", choices=["set-mode"])
+    tp = sub.add_parser("tasks", help="see tasks + their modes (list), or elevate one (set-mode)")
+    tp.add_argument("action", nargs="?", choices=["list", "set-mode"], default="list")
     tp.add_argument("task_id", nargs="?", default=None)
     tp.add_argument("mode", nargs="?", default=None)
+    wa = sub.add_parser("watch", help="live feed of what ChatGPT is doing right now")
+    wa.add_argument("--lines", type=int, default=15, help="how much history to show first")
     wp = sub.add_parser("worktrees", help="prune worktrees of finished tasks")
     wp.add_argument("action", nargs="?", choices=["prune"], default="prune")
     rp = sub.add_parser("roots", help="manage approved workspace roots (list/add/remove)")
@@ -305,6 +375,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_approvals(config, args.action, args.approval_id)
     if command == "tasks":
         return _cmd_tasks(config, args.action, args.task_id, args.mode)
+    if command == "watch":
+        return _cmd_watch(config, args.lines)
     if command == "worktrees":
         return _cmd_worktrees(config, args.action)
     if command == "roots":
