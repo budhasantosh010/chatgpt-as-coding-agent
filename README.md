@@ -42,13 +42,18 @@ C:\path\to\project and ..."*.
 
 You've done this with your Spectre bridge — same flow, new URL.
 
-1. Run `python -m harness url` (or `funnel.ps1`) to get the public URL. It looks like:
-   `https://<machine>.<tailnet>.ts.net/<secret-route>/mcp`
-2. In ChatGPT: **Settings → Connectors → Add / Advanced (custom MCP server)**.
-3. Paste the URL as the MCP server endpoint. Authentication: **None** — the
-   secret route in the URL is the gate. (If you set `HARNESS_BEARER_TOKEN`, use
-   the connector's token/header field instead.)
-4. Enable the connector in a chat and start a task.
+0. **Turn on Developer Mode first.** ChatGPT → **Settings → Connectors →
+   Advanced → Developer mode**. Without it, ChatGPT only exposes the `search`/
+   `fetch` tools of a connector and the coding tools are invisible. (Available on
+   Plus/Pro/Business/Enterprise.)
+1. Start the server + funnel, then run `python -m harness url` (or `funnel.ps1`)
+   to get the public URL: `https://<machine>.<tailnet>.ts.net/<secret-route>/mcp`.
+2. In ChatGPT: **Settings → Connectors → Create custom connector (MCP server)**.
+3. Paste the exact URL from `harness url` (format is `.../<secret-route>/mcp` —
+   don't rearrange it). Authentication: **None** — the secret route is the gate.
+   (If you set `HARNESS_BEARER_TOKEN`, use the connector's token field instead.)
+4. Scan tools → Create, enable the connector in a chat, and start a task. A safe
+   first prompt is a read-only warm-up (`open_workspace` only) before any edits.
 
 The secret route is a 256-bit random path, generated once and persisted in the
 state dir, so the URL stays stable across restarts.
@@ -95,8 +100,12 @@ workspace and `~/.agents/skills`).
 **Plan** — `write_todos`, `list_todos` (survives turn resets, shown in
 session_status).
 
-Permission gates: read-only tools always work; `write`/`execute` tools are
-disabled in `read_only` mode, which **only the operator can change**.
+Permission gates: read-only tools always work; `write`/`execute` tools follow
+the task's permission mode. ChatGPT can request modes only up to the server
+ceiling (`HARNESS_MAX_MODE`, default `auto_workspace`); `full`/`bypass_sandboxed`
+are **operator-only**, granted locally with `python -m harness tasks set-mode`.
+Tool calls **without** a `task_id` run in a shared read-only fallback session,
+so a forgotten handle can't silently write.
 
 ## Security & threat model
 
@@ -124,13 +133,19 @@ run commands — so the boundaries are enforced in code, not by trusting the mod
 - **Mode gate** — `read_only` disables write/execute. **ChatGPT cannot change the
   mode**; only the operator can, locally.
 
-**Honest limits.** With the default `local` backend the command denylist is a
-backstop, not a sandbox: `run_command` executes as your user and shell
-confinement is not absolute — flip on `HARNESS_SANDBOX=docker` for real isolation
-when running untrusted repos. Scrubbing is high-signal pattern matching: it
-catches well-known key formats, not every possible secret, so still scope
-`HARNESS_WORKSPACE_ROOTS` deliberately. Prefer a bearer token in addition to the
-secret route for a write+exec server.
+**Honest limits.** With the default `local` backend the command classifier is
+**advisory hardening, not a sandbox**: a regex can't know what arbitrary shell
+code does (`python -c …`, obfuscation, and heredocs slip past it), so
+`run_command` executes as your user. The real boundaries are the permission mode
+(deny/ask) and `HARNESS_SANDBOX=docker` with networking off — flip that on for
+untrusted repos, and set `HARNESS_ARBITRARY_COMMANDS=ask` to make anything
+unrecognized require approval. Under docker, internal git and ripgrep still run
+on the host (with repo hooks/config neutralized); `doctor` says so. Scrubbing is
+high-signal pattern matching: it catches well-known key formats, not every
+secret, so still scope `HARNESS_WORKSPACE_ROOTS` deliberately. Prefer a bearer
+token in addition to the secret route for a write+exec server. This is a
+**personal** tool with permissive defaults (`mode=full` for your own local
+context) — not an unattended multi-tenant runtime.
 
 ## Architecture (and how to extend it)
 
@@ -177,8 +192,10 @@ secret-content scrubbing on every return path, env allowlist, unified execution
 boundary (git hooks/filters neutralized), optional Docker sandbox, stdio transport.
 
 **Isolation:** pass a `task_id` (from `start_task`) to every tool call and
-concurrent conversations are fully isolated (separate workspace, permission mode,
-process owner). Without one, calls share a session and `open_workspace` warns.
+concurrent conversations are isolated — separate permission mode, process owner,
+and (on a git repo) a **separate physical worktree**, so two tasks on one project
+never edit the same files. Without a `task_id`, calls share a read-only fallback
+session.
 
 **Roadmap (deliberately later):** git itself running inside the container (today
 it runs on host with hooks/config neutralized), full Windows process-tree kill,
@@ -188,6 +205,6 @@ has no model; it offers subtasks instead.
 ## Development
 
 ```powershell
-python -m pytest tests -q     # 149 tests across security, tasks, permissions/approvals, code-intel, federation, …
+python -m pytest tests -q     # 216 tests across security, tasks, permissions/approvals, isolation, code-intel, federation, …
 python -m harness doctor      # validate config + environment
 ```

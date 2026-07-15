@@ -39,12 +39,41 @@ HarnessContext; each MCP tool is one thin wrapper declaring a capability. Adding
 a tool = one function + one wrapper. Adding a permission mode = edit policy.py
 only. Nothing else changes.
 
-## Status: 51 tools, 149 tests, verified end-to-end (HTTP + stdio). Phases 0–3 complete.
+## Status: 51 tools, 216 tests, verified end-to-end (HTTP + stdio). Phases 0–3 + full audit-hardening complete.
 
-**Isolation (fixed):** identity is an explicit `task_id` the model threads through
-tool calls. Two conversations working different tasks get different contexts
-(workspace, permission mode, process owner). `tests/test_isolation.py` proves it.
-Without a task_id, calls fall back to a shared session (open_workspace warns).
+**Independent audit (2026-07-15), verified & closed.** ChatGPT red-teamed the
+pushed `f7fe4e6`; I re-verified every claim against the code (3 parallel
+explorers) — 12 of 13 findings were real. All are now fixed test-first. The
+headline exploit — *ChatGPT could pick `full`/`bypass_sandboxed`, omit `task_id`,
+share physical files, and slip approval boundaries* — is closed:
+
+- **No self-escalation.** `start_task` is capped at `HARNESS_MAX_MODE` (default
+  `auto_workspace`); `context_for` re-enforces it on every call (authoritative
+  over legacy rows/subtasks). `full`/`bypass_sandboxed` are operator-only:
+  `python -m harness tasks set-mode <id> <mode>`. `bypass_sandboxed` requires
+  `sandbox=docker` or it degrades to `auto_workspace`.
+- **No-task calls are read-only.** The shared fallback session runs at
+  `HARNESS_NO_TASK_MODE` (default `read_only`), never the operator's mode;
+  writes tell the model to `start_task`. Legacy: `HARNESS_NO_TASK_MODE=full`.
+- **Physical isolation.** `start_task(isolation='auto')` creates & persists a
+  per-task worktree on git repos; two tasks on one project edit disjoint files.
+  `python -m harness worktrees prune` cleans terminal-task worktrees.
+- **Approvals bind to the exact request** (sha over task/tool/action/args) and
+  never cross tasks; **idempotency** is keyed `(task_id, tool, op_id)`.
+- **Federation** (`mcp_call`) is gated: denied in read_only/plan, asks in
+  auto_workspace, requires a task_id. **diagnostics_check** is EXECUTE (plan
+  mode can't run checkers). **read_image** passes the gate + audit hooks.
+- **git_commit** doesn't run repo hooks on the host by default (`no_hooks`);
+  opt in with `HARNESS_COMMIT_HOOKS=true`. **Terminal tasks are frozen.**
+- **Telemetry is real:** changed_files/commands/test_results/checkpoints/plan
+  are populated from actual tool activity; `finish_task` wants evidence when
+  acceptance criteria exist.
+- **Packaging fixed:** `[tool.setuptools.packages.find]` ships `harness.tasks`
+  (the wheel was broken). Linux path test fixed.
+
+**Isolation:** identity is an explicit `task_id` the model threads through tool
+calls, now backed by a real per-task worktree. Without a task_id, calls fall
+back to a read-only shared session.
 
 **Done — P0 hardening (security/correctness):** error-path scrubbing, run_command
 env allowlist, grep secret-path policy, `.env`/`.git` blocking, capability
@@ -78,7 +107,7 @@ open_pr.
 
 **Done — Tier 2/3 (hardening & extensibility):**
 - lifecycle hooks (`hooks.py`): pre/post-tool hooks around every call, wired in
-  server `_call` via `fn.__name__` + `hc.key` (zero churn to the 29 wrappers). A
+  server `_call` via `fn.__name__` + `hc.key` (zero churn to the tool wrappers). A
   pre-hook may veto (HookVeto); a post-hook may transform output. This is the
   extensibility backbone — new cross-cutting policy = register a hook.
 - secret-content scrubbing (`scrub.py`): a post-tool hook redacts known
@@ -95,14 +124,29 @@ open_pr.
   local MCP clients (Claude Desktop, IDE extensions). No middleware needed — the
   process boundary is the trust boundary.
 
+**Honest limits (still true after hardening):**
+- The command classifier (`permissions.py`) is **advisory hardening, not a
+  boundary** — a regex can't know what arbitrary shell code does (`python -c`,
+  obfuscation, heredocs slip through; `tests/test_quality_fixes.py` pins known
+  bypasses). The real boundaries are the mode table (deny/ask) and
+  `HARNESS_SANDBOX=docker` with `network=none`. Set `HARNESS_ARBITRARY_COMMANDS=ask`
+  to fail closed on unrecognized commands.
+- Under `sandbox=docker`, `run_command`/`start_process`/`diagnostics` run in the
+  container, but **internal git & ripgrep still run on the host** (hooks/config
+  neutralized). `doctor` states this.
+- Default config is permissive for a *personal* tool: `mode=full` (operator's own
+  direct context), `sandbox=local`, bearer optional. Harden deliberately for
+  untrusted repos.
+
 **Roadmap — genuinely later (not built; deliberately):**
 - Real per-project hardened container *images* + host→container path rewriting so
-  git itself runs inside the sandbox (today git runs on host with hooks/config
-  neutralized — the primary RCE vector is closed, filters in an untrusted repo
-  are the residual).
+  git itself runs inside the sandbox (worktree gitdir pointers store absolute
+  host paths → needs identical mount paths; hard on Windows).
 - Full Windows process-tree kill (killing a PowerShell wrapper can leave a
   grandchild; documented limitation).
 - richer sandbox backends (gVisor/Firecracker/remote) — a third Executor class.
+- Roots hot-reload (restart-required today, by design — a watcher is a
+  self-service escalation surface for a model with `run_command`).
 - Not applicable by design: autonomous LLM sub-agents (the harness has no model —
   ChatGPT is the brain; we provide subtasks instead).
 
@@ -120,8 +164,8 @@ open_pr.
   backend + command denylist is a backstop, not a sandbox; real isolation is now
   available via `HARNESS_SANDBOX=docker` (opt-in so the default stays portable).
 - **Extensibility goes through hooks, not wrapper edits.** Cross-cutting concerns
-  (audit, scrub, future approvals) attach in `hooks.py`; the 29 tool wrappers and
-  `policy.py` stay untouched. Adding a tool is still one pure fn + one wrapper.
+  (audit, scrub, telemetry, approvals) attach in `hooks.py`; the tool wrappers
+  and `policy.py` stay untouched. Adding a tool is still one pure fn + one wrapper.
 
 ## Run & test
 
@@ -131,7 +175,14 @@ python -m harness doctor           # validate config + environment
 python -m harness serve            # HTTP server on 127.0.0.1:8848 (for ChatGPT)
 python -m harness stdio            # stdio transport (for local MCP clients)
 python -m harness approvals list   # operator approval queue (build_ask/auto_workspace)
-python -m pytest tests -q          # 149 tests (needs pip install .[dev])
+python -m harness roots add <path> # approve a new workspace folder (restart to apply)
+python -m harness tasks set-mode <id> <mode>   # operator-only mode elevation
+python -m harness worktrees prune  # remove worktrees of finished tasks
+python -m pytest tests -q          # 216 tests (needs pip install .[dev])
+
+New env vars from the audit hardening: HARNESS_MAX_MODE (default auto_workspace),
+HARNESS_NO_TASK_MODE (default read_only), HARNESS_COMMIT_HOOKS (default off),
+HARNESS_ARBITRARY_COMMANDS (allow|ask, default allow).
 ```
 
 See README.md for the full ChatGPT-connector + Tailscale setup.
