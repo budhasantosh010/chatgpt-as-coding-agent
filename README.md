@@ -1,5 +1,9 @@
 # chatgpt-code-harness
 
+> **New here? Read [docs/MANUAL.md](docs/MANUAL.md) first.** It explains the
+> entire system in plain language with diagrams — what it is, where everything
+> is stored, how permissions work, and how to run it day to day. Start there.
+
 Code with your **ChatGPT** account the way you code with Claude Code or Codex —
 without draining your Codex allowance. ChatGPT is the reasoning loop; this is a
 local MCP server that gives it hands on your machine (read / write / edit / search /
