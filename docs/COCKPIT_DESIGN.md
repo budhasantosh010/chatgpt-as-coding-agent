@@ -1,6 +1,18 @@
-# Cockpit — design brief (for discussion, NOT yet built)
+# Cockpit — design brief (DECIDED 2026-07-15, not yet built)
 
-**Status:** proposal. Written to be argued with (by the user, by GPT, by anyone).
+**Status:** decided. The user discussed this with GPT; after exploring and
+rejecting alternatives (a GUI embedded inside ChatGPT via "MCP Apps", a hybrid
+of both, forking t3code's React codebase), both GPT and this brief converged on
+the same architecture: **a local-only cockpit on :8849, our own code, ChatGPT
+stays the untouched brain.** Decisions recorded inline below (see §7).
+
+**Body decision:** build our own single-page cockpit (vanilla HTML+JS served by
+Python, as proposed in §6) — do NOT fork t3code. t3code's screens are wired to
+its own provider engine (Codex/Claude sessions, token streams); rewiring them to
+our task/audit model costs more than drawing the same layout ourselves, and
+would drag Node+npm into a pure-Python project. We copy t3code/Codex's *layout*
+as design inspiration only. If the cockpit proves itself and wants more polish
+later, the front-end can be rebuilt in React on top of the identical API.
 **Goal:** give the harness the Codex-style GUI feel — project folders, chat
 sessions underneath them, a mode selector, drag-and-drop files — without losing
 the one thing that makes this project exist (free ChatGPT chat).
@@ -190,7 +202,10 @@ process, no Node." A single static HTML+JS page keeps that promise.
               (b) roots.json re-read on each path check, ONLY for the
                   file-backed list, never env  (needs a threat re-think)
               (c) keep restart, make it one button.
-     → LEANING: (c) then (a). Safety over convenience.
+     → ✅ DECIDED (2026-07-15): (c)/(a) — restart button in the cockpit.
+       The frozen-at-startup rule is what guarantees the model can never
+       gain new territory mid-session; hot-reload trades that guarantee
+       for saving one click. Bad trade.
 
  Q2. DEEP LINK vs COPY BUTTON
      Does https://chatgpt.com/?q=<prefilled> reliably prefill the composer?
@@ -208,7 +223,11 @@ process, no Node." A single static HTML+JS page keeps that promise.
      Honest framing: t3code gives a full single-window GUI TODAY for zero
      build effort — but it drives Codex CLI and burns the quota this project
      exists to avoid. The Cockpit costs a build but keeps the £0 brain.
-     → This is a values call, not a technical one. The user decides.
+     → ✅ DECIDED (2026-07-15): build the Cockpit, keep the £0 brain.
+       GPT independently reached the same conclusion ("T3-derived local
+       cockpit: YES; MCP GUI inside ChatGPT: NO; hybrid: NO; t3code
+       unchanged: NO"). Also decided: our own page, not a t3code fork
+       (see the Body decision at the top of this doc).
 
  Q5. DOES THE COCKPIT NEED AUTH?
      It's localhost-only, so anything on your machine can reach it.
