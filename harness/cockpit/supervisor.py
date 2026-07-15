@@ -43,6 +43,36 @@ class Supervisor:
         env["HARNESS_EVENT_TOKEN"] = self.cockpit.ingest_token
         return env
 
+    def _pid_file(self):
+        return self.config.state_dir / "engine.pid"
+
+    def _reap_stale_engine(self) -> None:
+        """If a previous supervisor was force-killed (not Ctrl+C), its engine
+        child can outlive it. On startup, reap that orphan so the port is free
+        and we don't stack engines. Best-effort and safe: only kills a PID we
+        recorded ourselves."""
+        f = self._pid_file()
+        if not f.exists():
+            return
+        try:
+            pid = int(f.read_text(encoding="utf-8").strip())
+        except (ValueError, OSError):
+            return
+        try:
+            if sys.platform == "win32":
+                subprocess.run(["taskkill", "/F", "/PID", str(pid)],
+                               capture_output=True, timeout=10)
+            else:
+                import os as _os
+                import signal
+                _os.kill(pid, signal.SIGTERM)
+        except Exception:  # noqa: BLE001 - the process may already be gone
+            pass
+        try:
+            f.unlink()
+        except OSError:
+            pass
+
     def start_engine(self) -> None:
         with self._engine_lock:
             if self._engine and self._engine.poll() is None:
@@ -51,6 +81,10 @@ class Supervisor:
                 [sys.executable, "-m", "harness", "serve"],
                 env=self._engine_env(),
             )
+            try:
+                self._pid_file().write_text(str(self._engine.pid), encoding="utf-8")
+            except OSError:
+                pass
 
     def stop_engine(self) -> None:
         with self._engine_lock:
@@ -61,6 +95,10 @@ class Supervisor:
                 except subprocess.TimeoutExpired:
                     self._engine.kill()
             self._engine = None
+            try:
+                self._pid_file().unlink()
+            except OSError:
+                pass
 
     def restart_engine(self) -> None:
         self.stop_engine()
@@ -119,6 +157,7 @@ class Supervisor:
     def run(self) -> int:
         import uvicorn
 
+        self._reap_stale_engine()  # clean up an orphan from a prior force-kill
         threading.Thread(target=self._watchdog, daemon=True).start()
         self.start_engine()
         app = build_cockpit_app(self.cockpit)
