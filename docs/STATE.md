@@ -39,7 +39,7 @@ HarnessContext; each MCP tool is one thin wrapper declaring a capability. Adding
 a tool = one function + one wrapper. Adding a permission mode = edit policy.py
 only. Nothing else changes.
 
-## Status: 51 tools, 216 tests, verified end-to-end (HTTP + stdio). Phases 0–3 + full audit-hardening complete.
+## Status: 57 tools, 276 tests, verified end-to-end (HTTP + stdio + live GUI). Cockpit + LSP + rules/hooks complete (see docs/CHECKLIST.md).
 
 **Independent audit (2026-07-15), verified & closed.** ChatGPT red-teamed the
 pushed `f7fe4e6`; I re-verified every claim against the code (3 parallel
@@ -178,7 +178,7 @@ python -m harness approvals list   # operator approval queue (build_ask/auto_wor
 python -m harness roots add <path> # approve a new workspace folder (restart to apply)
 python -m harness tasks set-mode <id> <mode>   # operator-only mode elevation
 python -m harness worktrees prune  # remove worktrees of finished tasks
-python -m pytest tests -q          # 216 tests (needs pip install .[dev])
+python -m pytest tests -q          # 276 tests (needs pip install .[dev])
 
 New env vars from the audit hardening: HARNESS_MAX_MODE (default auto_workspace),
 HARNESS_NO_TASK_MODE (default read_only), HARNESS_COMMIT_HOOKS (default off),

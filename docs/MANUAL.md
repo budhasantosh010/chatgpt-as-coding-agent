@@ -9,6 +9,91 @@ lost when you explain it to someone else.
 
 ---
 
+## 0. START HERE: one command, and a GUI appears
+
+```powershell
+python -m harness up
+```
+
+That's it. One command. It opens the **Cockpit** — your control panel — in your
+browser at `http://127.0.0.1:8849`, and quietly starts the engine behind it.
+
+```
+ ┌─────────────────────────────────────────────────────────────────────┐
+ │ ⛭ HARNESS COCKPIT            engine: running   [⟳ restart]          │
+ ├───────────┬────────────┬─────────────────────┬──────────────────────┤
+ │ PROJECTS  │ SESSIONS   │ SESSION DETAIL      │ ⚡ LIVE ACTIVITY     │
+ │           │            │                     │                      │
+ │ 📁 My App │ 💬 build   │ build the watch     │ 12:40 write_file     │
+ │ 📁 Site   │  [worktree]│ mode: [auto ▾]      │       index.html     │
+ │ 📁 Game   │  [auto]    │ isolation: worktree │ 12:41 run_command    │
+ │           │            │                     │       npm test       │
+ │  [+ Add]  │ 💬 fix bug │ [⑂ Fork] [📊 Diff]  │                      │
+ │           │  [plan]    │ [↗ Open ChatGPT]    ├──────────────────────┤
+ │           │            │                     │ ⏸ NEEDS YOU          │
+ │           │  [+ New]   │ Resume prompt:      │ run: pip install X   │
+ │           │            │ ┌─────────────────┐ │ [Approve] [Deny]     │
+ │           │            │ │Resume task T-9cb│ │ ☐ remember           │
+ │           │            │ └─────────────────┘ │                      │
+ │           │            │ [Copy prompt]       │                      │
+ │           │            │ ⬇ drop files here   │                      │
+ └───────────┴────────────┴─────────────────────┴──────────────────────┘
+```
+
+**What each column does**
+
+```
+ PROJECTS        your folders. [+ Add] opens a real Windows folder picker
+                 (a web page is NOT allowed to see a folder's real path —
+                  that's a browser security rule, so the picker is native).
+ SESSIONS        the chats/jobs under a project. Each is a harness TASK.
+                 Badges show its mode and whether it has its own worktree.
+ SESSION DETAIL  the mode dropdown, fork, visual diff, changed files, test
+                 results, checkpoints+restore, file drag-drop, and the
+                 ready-to-paste "resume prompt" with the task_id baked in.
+ LIVE ACTIVITY   what ChatGPT is doing RIGHT NOW, streaming, as it happens.
+ NEEDS YOU       approve/deny buttons for anything risky. Tick "remember"
+                 to never be asked about that exact command again.
+```
+
+### The one thing the Cockpit does NOT do
+
+```
+ ❌ You do not type your message here. You type in ChatGPT.
+
+ WHY (this never changes):
+   ChatGPT's chat quota can only be reached by a human typing at
+   chatgpt.com. There is no API for it. Any chat box we built would have
+   to call a DIFFERENT brain — which costs money per word or burns your
+   Codex quota. That is the exact thing this project exists to avoid.
+
+ So: ChatGPT = the talking. Cockpit = everything else.
+ That split is the PRICE OF THE FREE BRAIN, not a missing feature.
+```
+
+### 🔴 Why the Cockpit is on a different door number (8849)
+
+```
+ The Tailscale Funnel makes ALL of port 8848 reachable from the internet.
+ That is fine — ChatGPT needs to reach the engine there.
+
+ ❌ If the approve buttons lived on 8848, they'd be on the internet, and
+    ChatGPT itself could (in principle) be steered into pressing its OWN
+    approve button. The model approving itself destroys the single best
+    protection this project has.
+
+ ✅ So the Cockpit is a SEPARATE door (port 8849), bound to your machine
+    only (127.0.0.1), NEVER funneled. ChatGPT can reach 8848 only.
+    You can reach 8849 only.
+
+ There is also a second lock: any random website you visit could try to
+ make YOUR browser press buttons on 127.0.0.1 (this attack is called
+ CSRF). So every button-press must carry a secret token that only the
+ real cockpit page has, and the server checks who is asking (Origin).
+```
+
+---
+
 ## 1. What is this thing?
 
 ChatGPT can **think** but it cannot **touch** your computer. It can't open your
@@ -272,7 +357,7 @@ Reading it:
 ```
  WHAT  → READ (looked), WRITE (changed a file), EXEC (ran a command)
  MODE  → what power it had at that moment
- TOOL  → which of the 51 tools it used
+ TOOL  → which of the 57 tools it used
  TARGET→ the file/command it acted on
  TASK  → which job it belongs to
 ```
@@ -564,10 +649,61 @@ python -m harness tasks set-mode T-xxx full     # ⭐ grant power above the ceil
 
 python -m harness approvals list                # what's waiting for your yes/no
 python -m harness approvals approve A-xx        # allow it, once
+python -m harness approvals approve A-xx --remember   # ⭐ …and never ask again
 python -m harness approvals deny A-xx           # refuse it
 
+python -m harness commands list                 # ⭐ remembered per-project commands
+python -m harness commands allow "C:\proj" "npm run gen"    # always allow (exact)
+python -m harness commands revoke "C:\proj" "npm run gen"   # take it back
+
+python -m harness up                            # ⭐ THE GUI + engine, one command
 python -m harness worktrees prune               # delete copies of finished jobs
 python -m harness stdio                         # use from Claude Desktop etc.
+```
+
+**The remembered-commands file** lives at
+`<state_dir>\allowed_commands.json` — **outside every project folder**, exactly
+like `roots.json` and `hooks.json`. That placement is the whole point: ChatGPT's
+file tools can only touch approved project folders, so it **cannot write its own
+permission slip**.
+
+---
+
+## 13b. Three newer powers (added after the first release)
+
+```
+ 1) REAL CODE INTELLIGENCE (LSP)
+    Before: ChatGPT found code by SEARCHING TEXT (like Ctrl+F).
+    Now:    it can ask a language server real questions:
+              lsp_definition  → "where is this function DEFINED?"
+              lsp_references  → "who CALLS this?"        (before renaming!)
+              lsp_hover       → "what TYPE is this?"
+              lsp_symbols     → "what's declared in this file?"
+    It needs a language server installed. If none is, the tool tells you
+    exactly what to install (e.g. `pip install python-lsp-server`).
+
+ 2) PATH-SCOPED RULES  (rules that only apply to certain files)
+    Put a file in <project>\.harness\rules\anything.md:
+
+        ---
+        globs: migrations/**
+        ---
+        Never edit a migration that has already been applied.
+
+    When ChatGPT writes to migrations/001.sql, that rule is AUTOMATICALLY
+    attached to the result — the right rule, at the right moment, instead
+    of one giant rulebook it might ignore.
+
+ 3) YOUR OWN HOOKS  (run your script around ChatGPT's actions)
+    Put <state_dir>\hooks.json (again: outside every project, so the model
+    can't edit it):
+
+        [{"event":"pre","tool":"write_file","block_on_failure":true,
+          "command":["python","C:\\scripts\\gate.py"],"timeout":10}]
+
+    A "pre" hook that exits non-zero BLOCKS the tool (fail-closed).
+    A "post" hook just adds a note. Every hook gets a time limit, an output
+    limit, and a stripped environment with no secrets in it.
 ```
 
 ---
@@ -577,13 +713,16 @@ python -m harness stdio                         # use from Claude Desktop etc.
 ```
 ⚠️  THE SERVER LOADS CODE ONCE, AT STARTUP.
     If you change .env, add a root, or pull new code — the RUNNING server
-    still has the OLD version in memory. You MUST restart Window 1
-    (Ctrl+C, then .\scripts\run.ps1). This is the #1 source of "why isn't
-    my change working?"
+    still has the OLD version in memory. You MUST restart it. In the
+    Cockpit that's the [⟳ restart] button (it restarts the engine child
+    while the Cockpit itself stays up). Without the GUI: Ctrl+C and
+    re-run. This is the #1 source of "why isn't my change working?"
+    NOTE: restarting kills in-flight ChatGPT calls and any dev servers —
+    the Cockpit warns you first if a task is active.
 
 ⚠️  NO DEVELOPER MODE = NO TOOLS.
     Without ChatGPT's Developer Mode on, ChatGPT only sees search/fetch and
-    none of the 51 coding tools. It will look broken.
+    none of the 57 coding tools. It will look broken.
 
 ⚠️  NO task_id = READ-ONLY.
     If ChatGPT forgets the task_id, writes get denied on purpose. Tell it:

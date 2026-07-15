@@ -1,4 +1,12 @@
-# THE CHECKLIST — tick one by one until done (created 2026-07-15)
+# THE CHECKLIST — ✅ ALL PHASES DONE (built 2026-07-16)
+
+**Status: complete.** 57 MCP tools · 276 tests passing · cockpit driven live in a
+real browser · LSP verified against a real language server · full flow proven
+with a real MCP client against the running engine. Two items deliberately
+deferred and marked below (3.8 open-in-VS-Code, 4.1 desktop shortcut/tray).
+
+Run it: `python -m harness up`
+
 
 This is the single execution list, merged from three rounds of adversarial
 review (Claude ↔ GPT, every claim verified against code). Rationale lives in

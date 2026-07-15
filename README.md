@@ -26,22 +26,50 @@ ChatGPT  ──MCP over HTTPS──►  Tailscale Funnel  ──►  localhost:8
                                               your approved workspace
 ```
 
-## Quickstart
+## Quickstart — one command
 
 ```powershell
-# 1. Point it at the folders ChatGPT may touch
-copy .env.example .env
-#    edit .env: set HARNESS_WORKSPACE_ROOTS=C:\path\to\your\projects
-
-# 2. Sanity-check config + environment
-python -m harness doctor
-
-# 3. Run the server (localhost only)
-python -m harness serve          # or: .\scripts\run.ps1
-
-# 4. In another terminal, expose it to ChatGPT and print the URL
-.\scripts\funnel.ps1             # runs `tailscale funnel` + prints the MCP URL
+python -m harness up
 ```
+
+That starts **everything**: the operator GUI (the **Cockpit**) on
+`http://127.0.0.1:8849`, opens it in your browser, and runs the MCP engine on
+:8848 as a child process. No more three terminals.
+
+```
+ ┌──────────────────┐         ┌──────────────────┐
+ │  WINDOW 1        │   MCP   │  THE ENGINE      │
+ │  ChatGPT         │────────▶│  :8848 (child)   │
+ │  (you type here, │ funnel  │  files/git/shell │
+ │   the brain)     │         └────────┬─────────┘
+ └──────────────────┘                  │ localhost only, never funneled
+                              ┌────────▼─────────┐
+                              │  WINDOW 2        │
+                              │  THE COCKPIT     │
+                              │  :8849 — projects│
+                              │  sessions, modes │
+                              │  live activity,  │
+                              │  approvals, diffs│
+                              └──────────────────┘
+```
+
+**The Cockpit gives you the Codex-style GUI:** a project sidebar, chat sessions
+underneath each project, a permission-mode dropdown per session, a live feed of
+what ChatGPT is doing right now, one-click approve/deny, visual diffs, and
+drag-and-drop files. It is **localhost-only and never exposed through the
+funnel** — approvals must stay beyond the model's reach.
+See [docs/COCKPIT_DESIGN.md](docs/COCKPIT_DESIGN.md).
+
+<details>
+<summary>Manual mode (the old three-terminal way, still supported)</summary>
+
+```powershell
+copy .env.example .env           # set HARNESS_WORKSPACE_ROOTS=C:\path\to\projects
+python -m harness doctor         # sanity-check config + environment
+python -m harness serve          # engine only (no GUI)
+.\scripts\funnel.ps1             # expose to ChatGPT + print the MCP URL
+```
+</details>
 
 Then add it to ChatGPT (below) and tell ChatGPT: *"Open workspace
 C:\path\to\project and ..."*.
@@ -68,16 +96,23 @@ state dir, so the URL stays stable across restarts.
 
 **Other MCP clients (Claude Desktop, IDE extensions):** run
 `python -m harness stdio` and point the client at it as a stdio MCP server — the
-same 51 tools, no Tailscale or secret route needed (the process boundary is the
+same 57 tools, no Tailscale or secret route needed (the process boundary is the
 trust boundary).
 
-## The tools ChatGPT sees (51)
+## The tools ChatGPT sees (57)
 
 **Tasks (the isolation handle)** — `start_task(project, goal, permission_mode)`
 returns a `task_id` you thread through every call so concurrent conversations
 stay isolated; `list_tasks`, `task_status`, `resume_task`, `set_task_goal`,
 `set_acceptance_criteria`, `advance_task`, `finish_task`, `cancel_task`,
-`create_subtask`, `register_project`.
+`create_subtask`, `register_project`, `create_project` (new folder + git init,
+confined to an approved root), `fork_task` (same base, own worktree — try two
+approaches side by side).
+
+**Code intelligence (LSP)** — `lsp_definition`, `lsp_references`, `lsp_hover`,
+`lsp_symbols`: real go-to-definition / find-references / types from a language
+server, not text search. Auto-detects pyright/pylsp/typescript-language-server/
+rust-analyzer/gopls; if none is installed it says exactly what to install.
 
 **Orient** — `open_workspace(path)` (call first: git state, structure, project
 rules, suggested test/build commands, remembered facts), `session_status()`
@@ -111,9 +146,17 @@ session_status).
 Permission gates: read-only tools always work; `write`/`execute` tools follow
 the task's permission mode. ChatGPT can request modes only up to the server
 ceiling (`HARNESS_MAX_MODE`, default `auto_workspace`); `full`/`bypass_sandboxed`
-are **operator-only**, granted locally with `python -m harness tasks set-mode`.
-Tool calls **without** a `task_id` run in a shared read-only fallback session,
-so a forgotten handle can't silently write.
+are **operator-only**, granted locally with `python -m harness tasks set-mode`
+or the Cockpit's mode dropdown. Tool calls **without** a `task_id` run in a
+shared read-only fallback session, so a forgotten handle can't silently write.
+
+**Unrecognized commands ask by default** (`HARNESS_ARBITRARY_COMMANDS=ask`).
+Everyday dev commands (`pytest`, `npm test`, linters, local git) are a positive
+*safe tier* that always runs, so ask-mode is safe without being annoying. When
+something new does ask, approve it once — or tick **remember** (or
+`approvals approve <id> --remember`) to always allow that **exact** command in
+that **one** project. The remembered list lives in the state dir, outside every
+workspace root, so the model can never write its own allowlist.
 
 ## Security & threat model
 
@@ -163,19 +206,29 @@ knows nothing about tools. They meet at one typed seam.
 ```
 harness/
   app.py         composition root: config -> context -> server -> secured app
-  __main__.py    CLI: serve / doctor / url
+  __main__.py    CLI: up / serve / stdio / doctor / url / watch / tasks / approvals /
+                 commands / roots / worktrees
   config.py      12-factor config (env + .env), persisted secret route
   context.py     HarnessContext — injected into every tool (no globals)
   policy.py      Capability + PermissionPolicy — the one place modes are decided
+  permissions.py action classes + command classifier (risk tiers AND a safe tier)
+  allowlist.py   remembered per-project exact-command approvals (operator-only)
   security.py    path confinement / secret globs / command denylist (isolated, tested)
   session.py     per-workspace event log (resume support)
+  events.py      structured live-event bus (ids + replay + push sink) for the cockpit
   proc.py        one async subprocess impl (non-blocking) + shell_argv
   executor.py    Executor port: LocalExecutor (default) / DockerExecutor (sandbox)
-  hooks.py       pre/post-tool hooks (audit, output scrubbing, future policy)
+  hooks.py       pre/post-tool hooks (audit, events, checkpoints, telemetry,
+                 path-scoped rules, auto-format, scrubbing)
+  userhooks.py   OPERATOR-configured hooks from <state_dir>/hooks.json (sandboxed)
+  rules.py       path-scoped project rules (surfaced when you touch matching files)
+  lsp.py         Language Server Protocol client (real code intelligence)
   scrub.py       secret-content redaction (a post-tool hook)
   middleware.py  pure-ASGI security shell (SSE-safe)
   server.py      FastMCP: thin typed tool wrappers + capability + lifecycle hooks
-  tools/         files / search / shell / workspace — pure async logic over hc
+  tools/         files / search / shell / workspace / codeintel — pure async logic
+  cockpit/       the operator GUI: supervisor (spawns the engine), localhost API,
+                 SSE feed, and a single static HTML/CSS/JS page (no npm)
 ```
 
 **Add a tool** in two steps:
@@ -213,6 +266,6 @@ has no model; it offers subtasks instead.
 ## Development
 
 ```powershell
-python -m pytest tests -q     # 216 tests across security, tasks, permissions/approvals, isolation, code-intel, federation, …
+python -m pytest tests -q     # 276 tests across security, tasks, permissions/approvals, isolation, cockpit, LSP, rules/hooks, federation, …
 python -m harness doctor      # validate config + environment
 ```
