@@ -129,6 +129,15 @@ def _cmd_doctor(config: Config) -> int:
         print(f"  [{'ok' if found else ('MISSING' if docker_missing else 'warn')}] {tool}: {note}")
     print(f"  [ok] output scrubbing: {'on' if config.scrub_output else 'OFF'}")
     print(f"  [ok] execution backend: {config.sandbox}")
+    if config.sandbox == "docker":
+        print("       note: run_command / start_process / diagnostics run in the "
+              "container;")
+        print("       internal git & ripgrep still run on the host (hooks/config "
+              "neutralized).")
+    print(f"  [ok] no-task fallback mode: {config.no_task_mode}  |  max requestable mode: {config.max_mode}")
+    print(f"  [ok] commit hooks: {'ON (repo hooks run on host)' if config.commit_hooks else 'off (repo hooks neutralized)'}")
+    print(f"  [ok] unrecognized commands in auto_workspace: {config.arbitrary_commands}"
+          + ("  (classifier is advisory, not a boundary)" if config.arbitrary_commands == "allow" else ""))
     print(f"  [ok] state dir: {config.state_dir}")
     print(f"  [{'ok' if config.bearer_token else 'warn'}] bearer token: "
           f"{'set' if config.bearer_token else 'not set (secret route is the gate)'}")

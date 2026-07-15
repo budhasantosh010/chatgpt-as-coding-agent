@@ -128,6 +128,10 @@ class Config:
     # Let git_commit run the repo's own hooks (pre-commit etc.). Off by default:
     # repo hooks are repo-controlled code executing on the host.
     commit_hooks: bool = False
+    # In auto_workspace mode, what happens to commands the classifier does NOT
+    # recognize: "allow" (default; the classifier is advisory) or "ask" (fail
+    # closed — anything unrecognized needs operator approval).
+    arbitrary_commands: str = "allow"
     # Execution backend for run_command: "local" (host shell) or "docker" (sandbox).
     sandbox: str = "local"
     sandbox_image: str = "python:3.12-slim"
@@ -189,6 +193,8 @@ class Config:
             raise ValueError(f"HARNESS_MAX_MODE must be one of {_valid_modes}, got {self.max_mode!r}")
         if self.sandbox not in ("local", "docker"):
             raise ValueError(f"HARNESS_SANDBOX must be 'local' or 'docker', got {self.sandbox!r}")
+        if self.arbitrary_commands not in ("allow", "ask"):
+            raise ValueError(f"HARNESS_ARBITRARY_COMMANDS must be 'allow' or 'ask', got {self.arbitrary_commands!r}")
 
     @property
     def mcp_path(self) -> str:
@@ -227,6 +233,7 @@ class Config:
             auto_checkpoint=_env_bool("AUTO_CHECKPOINT", True),
             auto_checkpoint_interval=_env_int("AUTO_CHECKPOINT_INTERVAL", 60),
             commit_hooks=_env_bool("COMMIT_HOOKS", False),
+            arbitrary_commands=_env("ARBITRARY_COMMANDS", "allow"),
             sandbox=_env("SANDBOX", "local"),
             sandbox_image=_env("SANDBOX_IMAGE", "python:3.12-slim"),
             sandbox_network=_env("SANDBOX_NETWORK", "none"),

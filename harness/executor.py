@@ -115,8 +115,15 @@ class DockerExecutor(Executor):
 
     The workspace is bind-mounted at ``/work`` and made the working directory,
     so file edits persist on the host while the command itself is isolated.
-    Applies to both run_command and start_process. Stopping a backgrounded
-    container is best-effort (killing the ``docker run`` client).
+    Applies to run_command, start_process, and diagnostics (via ``run`` /
+    ``spawn_argv``). Stopping a backgrounded container is best-effort (killing
+    the ``docker run`` client).
+
+    SCOPE (honest): ``run_argv`` is NOT overridden, so harness-internal git and
+    ripgrep still execute on the host — with repo hooks and system/global config
+    neutralized (see gitcmd.py), which closes the primary code-execution vector.
+    Fully containerizing git needs host→container path rewriting for worktree
+    gitdir pointers + per-project images; that remains deliberately deferred.
     """
 
     name = "docker"

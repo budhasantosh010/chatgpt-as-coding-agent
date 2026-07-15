@@ -32,7 +32,12 @@ async def notebook_read(hc: HarnessContext, path: str) -> str:
     if not real.exists():
         raise FileNotFoundError(f"Notebook not found: {real}")
     nb = _load(real)
-    lines = [f"# {real.name} — {len(nb['cells'])} cells"]
+    from .files import _sha
+
+    raw = real.read_text(encoding="utf-8", errors="replace")
+    # Same stale-write contract as read_file: pass this sha to notebook_edit's
+    # expected_sha to be rejected if the notebook changed underneath.
+    lines = [f"# {real.name} — {len(nb['cells'])} cells [sha256:{_sha(raw)[:12]}]"]
     for i, cell in enumerate(nb["cells"]):
         ctype = cell.get("cell_type", "?")
         body = _src(cell)
@@ -49,12 +54,17 @@ async def notebook_edit(
     source: str = "",
     mode: str = "replace",
     cell_type: str = "code",
+    expected_sha: str | None = None,
 ) -> str:
     """mode: 'replace' (set cell source), 'insert' (new cell before index),
-    'delete' (remove cell)."""
+    'delete' (remove cell). Pass expected_sha (from notebook_read's header) to
+    be rejected if the notebook changed since you read it."""
+    from .files import _assert_fresh
+
     real = hc.resolve_write(path)
     if not real.exists():
         raise FileNotFoundError(f"Notebook not found: {real}")
+    _assert_fresh(real, expected_sha)
     nb = _load(real)
     cells = nb["cells"]
 

@@ -7,7 +7,7 @@ import asyncio
 from harness.config import Config
 from harness.context import HarnessServer
 from harness.policy import Capability
-from harness.result import ResultEnvelope, error_code_for
+from harness.result import error_code_for
 from harness.server import _call_idem
 from harness.tasks import tools as tt
 from harness.tools import files
@@ -81,9 +81,15 @@ def test_operation_id_scoped_to_tool(tmp_path):
     assert (ws / "a.txt").read_text() == "v2"
 
 
-def test_result_envelope_and_error_codes():
-    env = ResultEnvelope(ok=True, task_id="T-1", operation_id="op-1", data="done")
-    assert env.ok and env.data == "done"
+def test_error_codes():
     assert error_code_for("Error: Stale write blocked: x") == "STALE_FILE"
     assert error_code_for("Error: 'file_write' is denied in 'plan' mode") == "PERMISSION_DENIED"
     assert error_code_for("⏸ APPROVAL REQUIRED — ...") == "APPROVAL_REQUIRED"
+
+
+def test_errors_carry_stable_codes(tmp_path):
+    """The _call error path emits `Error: [CODE] message`."""
+    server, tid, ws = _server_task(tmp_path)
+    hc = server.context_for(tid, "default")
+    out = run(_call_idem(hc, Capability.WRITE, None, files.edit_file, "missing.txt", "a", "b"))
+    assert out.startswith("Error: [NOT_FOUND]")

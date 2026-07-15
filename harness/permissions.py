@@ -35,14 +35,24 @@ class Action(str, Enum):
 
 
 # Command patterns → action class (first match wins). High-signal only.
+# HONESTY NOTE: this classifier is advisory hardening, NOT a security boundary.
+# A regex cannot determine what arbitrary shell code does (`python -c` one-liners
+# will always slip through). The real boundaries are the mode table (deny/ask)
+# and the Docker sandbox with network=none. HARNESS_ARBITRARY_COMMANDS=ask makes
+# auto_workspace ask for anything unrecognized, closing the fall-through.
+_GIT_OPTS = r"(?:\s+-[A-Za-z](?:\s+\S+)?|\s+--[\w-]+(?:=\S+)?)*"  # e.g. `-C .`, `--no-pager`
 _CMD_PATTERNS: tuple[tuple[Action, re.Pattern], ...] = (
-    (Action.GIT_REMOTE_WRITE, re.compile(r"\bgit\s+(push|pull|fetch|remote|clone)\b", re.I)),
+    (Action.GIT_REMOTE_WRITE, re.compile(rf"\bgit{_GIT_OPTS}\s+(push|pull|fetch|remote|clone)\b", re.I)),
     (Action.GIT_REMOTE_WRITE, re.compile(r"\bgh\s+(pr|repo|release|api)\b", re.I)),
     (Action.PACKAGE_INSTALL, re.compile(r"\b(npm|pnpm|yarn|pip|pip3|poetry|cargo|gem|apt|apt-get|brew|go)\s+(install|add|get)\b", re.I)),
     (Action.PACKAGE_INSTALL, re.compile(r"\bnpx\b|\buvx\b", re.I)),
     (Action.DEPLOYMENT, re.compile(r"\b(kubectl|helm|terraform|serverless|vercel|netlify|fly|heroku|docker\s+push)\b", re.I)),
     (Action.DEPLOYMENT, re.compile(r"\baws\s+|\bgcloud\s+|\baz\s+", re.I)),
     (Action.NETWORK, re.compile(r"\b(curl|wget|nc|netcat|ssh|scp|rsync|telnet|ftp)\b", re.I)),
+    # PowerShell + Windows download primitives
+    (Action.NETWORK, re.compile(r"\b(Invoke-WebRequest|Invoke-RestMethod|iwr|irm|Start-BitsTransfer|bitsadmin)\b|certutil\s+-urlcache", re.I)),
+    # Best-effort: inline python/node one-liners that obviously reach the network
+    (Action.NETWORK, re.compile(r"\b(python[0-9.]*|node)\s+(-c|-e)\s+.*(urllib|urlopen|requests\.|socket\.|http\.client|fetch\()", re.I | re.S)),
     (Action.DATABASE_MUTATION, re.compile(r"\b(psql|mysql|mongo|redis-cli|sqlite3)\b|\b(DROP|TRUNCATE|DELETE\s+FROM|ALTER)\b", re.I)),
 )
 
@@ -76,7 +86,7 @@ _AUTO_WORKSPACE_ALLOW = {
 _READS = {Action.FILE_READ, Action.EXTERNAL_READ}
 
 
-def decide(mode: str, action: Action) -> Decision:
+def decide(mode: str, action: Action, arbitrary_commands: str = "allow") -> Decision:
     if mode in ("full", "bypass_sandboxed"):
         return Decision.ALLOW
     if mode in ("read_only", "plan"):
@@ -84,5 +94,9 @@ def decide(mode: str, action: Action) -> Decision:
     if mode == "build_ask":
         return Decision.ALLOW if action in _READS else Decision.ASK
     if mode == "auto_workspace":
+        # HARNESS_ARBITRARY_COMMANDS=ask closes the classifier fall-through:
+        # anything not positively recognized asks instead of auto-running.
+        if action is Action.COMMAND_ARBITRARY and arbitrary_commands == "ask":
+            return Decision.ASK
         return Decision.ALLOW if action in _AUTO_WORKSPACE_ALLOW else Decision.ASK
     return Decision.DENY  # unknown mode: fail closed

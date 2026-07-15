@@ -129,7 +129,8 @@ def _gate(hc: HarnessContext, capability: Capability | None, tool: str, command:
     command classification (e.g. federation's EXTERNAL_CALL)."""
     if action is None:
         action = action_for(capability, command)
-    decision = decide_action(hc.policy.mode, action)
+    arbitrary = getattr(getattr(hc, "config", None), "arbitrary_commands", "allow")
+    decision = decide_action(hc.policy.mode, action, arbitrary)
     if decision is Decision.ALLOW:
         return None
     if decision is Decision.DENY:
@@ -202,7 +203,9 @@ async def _call(hc: HarnessContext, capability: Capability | None, fn, *args) ->
         call.result = result if isinstance(result, str) else str(result)
         return await hooks.run_post(call)
     except _EXPECTED_ERRORS as exc:
-        return _finalize(hc, f"Error: {exc}")
+        from .result import error_code_for
+
+        return _finalize(hc, f"Error: [{error_code_for(str(exc))}] {exc}")
 
 
 async def _pre(hc: HarnessContext, capability: Capability, tool_name: str,
@@ -355,12 +358,13 @@ def build_mcp(config: Config, server: HarnessServer) -> FastMCP:
         return await _call_idem(hc, Capability.EXECUTE, operation_id, shell.run_command, command, cwd, timeout)
 
     @mcp.tool()
-    async def apply_patch(patch: str, operation_id: str | None = None, task_id: str | None = None, ctx: Context = None) -> str:
+    async def apply_patch(patch: str, expected_shas: dict | None = None, operation_id: str | None = None, task_id: str | None = None, ctx: Context = None) -> str:
         """Apply a unified diff to the workspace (via git apply). Each target path
         is confinement/secret/.git-checked before applying. Good for large or
-        multi-hunk changes expressed as a standard diff."""
+        multi-hunk changes expressed as a standard diff. Optionally pass
+        expected_shas {path: sha} (from read_file headers) as a stale-write guard."""
         hc = server.context_for(task_id, _session_key(ctx))
-        return await _call_idem(hc, Capability.WRITE, operation_id, files.apply_patch, patch)
+        return await _call_idem(hc, Capability.WRITE, operation_id, files.apply_patch, patch, expected_shas)
 
     @mcp.tool()
     async def read_image(path: str, task_id: str | None = None, ctx: Context = None) -> Image:
@@ -382,11 +386,12 @@ def build_mcp(config: Config, server: HarnessServer) -> FastMCP:
         return await _call(hc, Capability.READ, notebook.notebook_read, path)
 
     @mcp.tool()
-    async def notebook_edit(path: str, cell_index: int, source: str = "", mode: str = "replace", cell_type: str = "code", operation_id: str | None = None, task_id: str | None = None, ctx: Context = None) -> str:
+    async def notebook_edit(path: str, cell_index: int, source: str = "", mode: str = "replace", cell_type: str = "code", expected_sha: str | None = None, operation_id: str | None = None, task_id: str | None = None, ctx: Context = None) -> str:
         """Edit a notebook cell. mode: 'replace' (set source), 'insert' (new cell
-        before cell_index), 'delete'. Keeps the .ipynb valid."""
+        before cell_index), 'delete'. Keeps the .ipynb valid. Pass expected_sha
+        (from notebook_read's header) to reject the edit if the file changed."""
         hc = server.context_for(task_id, _session_key(ctx))
-        return await _call_idem(hc, Capability.WRITE, operation_id, notebook.notebook_edit, path, cell_index, source, mode, cell_type)
+        return await _call_idem(hc, Capability.WRITE, operation_id, notebook.notebook_edit, path, cell_index, source, mode, cell_type, expected_sha)
 
     # ---- version control actions (commit / PR) -----------------------------
 

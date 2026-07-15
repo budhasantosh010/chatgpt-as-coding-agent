@@ -214,10 +214,12 @@ def _patch_targets(patch: str) -> list[str]:
     return targets
 
 
-async def apply_patch(hc: HarnessContext, patch: str) -> str:
+async def apply_patch(hc: HarnessContext, patch: str, expected_shas: dict | None = None) -> str:
     """Apply a unified diff to the workspace via `git apply` (robust context
     matching). Every target path is checked against the workspace confinement +
-    secret + .git guards BEFORE applying, so a crafted patch can't escape."""
+    secret + .git guards BEFORE applying, so a crafted patch can't escape.
+    Optionally pass expected_shas {path: sha_prefix} (from read_file headers)
+    for an explicit stale-write guard on top of git's own context matching."""
     import secrets as _secrets
 
     from . import gitcmd
@@ -230,6 +232,8 @@ async def apply_patch(hc: HarnessContext, patch: str) -> str:
         raise ValueError("No target files found in patch (need unified diff '+++ b/...' headers).")
     for t in targets:
         hc.resolve_write(t)  # raises SecurityError if outside root / secret / .git
+    for p, sha in (expected_shas or {}).items():
+        _assert_fresh(hc.resolve_write(p), sha)
 
     tmp = hc.config.state_dir / "tmp"
     tmp.mkdir(parents=True, exist_ok=True)

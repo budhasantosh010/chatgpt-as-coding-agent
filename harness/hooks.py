@@ -118,29 +118,38 @@ def make_audit_hook(audit_path: Path) -> PreHook:
 
 def make_autocheckpoint_hook(min_interval: float = 60.0) -> PreHook:
     """Pre-hook: snapshot the workspace before a mutation, so there is always a
-    recent restore point even if the model forgets to checkpoint. Debounced —
-    at most one auto-checkpoint per ``min_interval`` seconds per session — so a
-    burst of edits is captured as one pre-batch state, not spammed."""
+    recent restore point even if the model forgets to checkpoint. Fires before
+    WRITE *and* EXECUTE (a shell command can mutate files too). Debounced — at
+    most one auto-checkpoint per ``min_interval`` seconds per workspace — and
+    the debounce resets on a workspace switch so a new workspace always gets a
+    fresh pre-batch snapshot. Failures are logged, never silent."""
     import time
 
     from .policy import Capability
 
     async def _auto(call: ToolCall) -> None:
-        if call.capability is not Capability.WRITE:
+        if call.capability not in (Capability.WRITE, Capability.EXECUTE):
             return
         hc = call.context
         if hc is None or getattr(hc, "active_workspace", None) is None:
             return
         now = time.monotonic()
         last = getattr(hc, "_last_auto_cp", None)
-        if last is not None and (now - last) < min_interval:
+        last_ws = getattr(hc, "_last_auto_cp_ws", None)
+        same_ws = last_ws == str(hc.active_workspace)
+        if last is not None and same_ws and (now - last) < min_interval:
             return
         hc._last_auto_cp = now
+        hc._last_auto_cp_ws = str(hc.active_workspace)
         try:
             from .tools import git as git_tool
             await git_tool.create_checkpoint(hc, "auto (pre-edit)")
-        except Exception:  # noqa: BLE001 - a checkpoint failure must not block the edit
-            pass
+        except Exception as exc:  # noqa: BLE001 - must not block the edit, but never silent
+            call.meta["autocheckpoint_failed"] = str(exc)
+            try:
+                hc.log("autocheckpoint_failed", error=str(exc)[:200])
+            except Exception:  # noqa: BLE001
+                pass
 
     return _auto
 

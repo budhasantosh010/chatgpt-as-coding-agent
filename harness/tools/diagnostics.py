@@ -53,7 +53,15 @@ async def diagnostics(hc: HarnessContext, path: str | None = None) -> str:
     executor = getattr(hc, "executor", None) or LocalExecutor(
         hc.config.shell, getattr(hc.config, "env_allowlist", ())
     )
-    result = await executor.run_argv(argv, cwd=str(ws), timeout=120)
+    # Under the Docker sandbox, run the checker INSIDE the container (run() →
+    # spawn_argv), not on the host via run_argv — a project checker (e.g. cargo
+    # check) can execute repo-controlled build scripts. Locally, run_argv keeps
+    # the restricted-env argv path.
+    if getattr(executor, "name", "local") == "docker":
+        import shlex
+        result = await executor.run(shlex.join(argv), cwd=str(ws), timeout=120)
+    else:
+        result = await executor.run_argv(argv, cwd=str(ws), timeout=120)
     out = result.combined.strip()
     max_chars = hc.config.max_output_chars
     if len(out) > max_chars:

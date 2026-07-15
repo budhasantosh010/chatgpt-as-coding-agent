@@ -1,23 +1,13 @@
-"""Structured result envelope + stable error codes.
+"""Stable error codes for tool failures.
 
 The primary tool output stays human-readable prose (the consumer is ChatGPT,
-which reads prose better than JSON). This envelope is the machine-readable form
-for structured consumers (a future UI, the task layer, tests) and gives errors
-stable codes so success/failure is unambiguous.
+which reads prose better than JSON), but every error carries a stable
+machine-checkable code — `Error: [CODE] message` — wired into the server's
+error path. (A ResultEnvelope model used to live here unused; dead code is
+dishonest docs, so it was removed.)
 """
 
 from __future__ import annotations
-
-from pydantic import BaseModel, Field
-
-
-class ResultEnvelope(BaseModel):
-    ok: bool
-    task_id: str | None = None
-    operation_id: str | None = None
-    data: str = ""
-    warnings: list[str] = Field(default_factory=list)
-    error_code: str | None = None
 
 
 def error_code_for(message: str) -> str:
