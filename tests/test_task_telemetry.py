@@ -65,6 +65,19 @@ def test_test_command_records_test_result(taskctx):
     assert task.test_results[-1]["passed"] is False
 
 
+def test_apply_patch_records_target_not_patch_text(taskctx):
+    """Regression (found by the end-to-end capability test): apply_patch's arg is
+    the diff text, not a path — changed_files must list the TARGET file, never
+    the raw patch string."""
+    srv, tid, hc, ws = taskctx
+    (ws / "app.py").write_text("a = 1\n", encoding="utf-8")
+    patch = "--- a/app.py\n+++ b/app.py\n@@ -1 +1,2 @@\n a = 1\n+b = 2\n"
+    run(_call(hc, Capability.WRITE, files.apply_patch, patch, None))
+    task = srv.tasks.get_task(tid)
+    assert "app.py" in task.changed_files
+    assert not any("---" in c or "+++" in c for c in task.changed_files)
+
+
 def test_write_todos_mirrors_plan(taskctx):
     srv, tid, hc, ws = taskctx
     run(_call(hc, Capability.WRITE, todos_tool.write_todos,

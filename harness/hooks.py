@@ -161,7 +161,9 @@ def make_telemetry_hook(store) -> PostHook:
     break or slow a tool call."""
     import re
 
-    _WRITE_TOOLS = {"write_file", "edit_file", "apply_patch", "notebook_edit"}
+    # Tools whose FIRST arg is the edited path. apply_patch is NOT here — its
+    # arg is the diff text, not a path; its changed files come from the result.
+    _WRITE_TOOLS = {"write_file", "edit_file", "notebook_edit"}
     _TEST_PAT = re.compile(
         r"\b(pytest|npm\s+(run\s+)?test|yarn\s+test|pnpm\s+test|cargo\s+test|"
         r"go\s+test|jest|vitest|unittest|tox)\b", re.I,
@@ -192,6 +194,14 @@ def make_telemetry_hook(store) -> PostHook:
                     if p and p not in task.changed_files:
                         task.changed_files.append(p)
                         dirty = True
+            elif tool == "apply_patch":
+                # Result: "Applied patch to N file(s): a.py, b.py"
+                m = re.search(r"file\(s\):\s*(.+)$", result)
+                if m:
+                    for p in (x.strip() for x in m.group(1).split(",")):
+                        if p and p not in task.changed_files:
+                            task.changed_files.append(p)
+                            dirty = True
             elif tool in ("run_command", "start_process") and args and isinstance(args[0], str):
                 cmd = args[0]
                 m = re.search(r"exit code:\s*(-?\d+)", result)
