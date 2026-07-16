@@ -78,6 +78,8 @@ class Task(BaseModel):
     # Optional link back to the ChatGPT conversation driving this task (operator
     # pastes it in the cockpit). The harness never controls ChatGPT's sidebar.
     chat_url: str = ""
+    # Durable navigation preference owned by the task domain, not browser state.
+    pinned: bool = False
     result: str | None = None
     created: str = ""
     updated: str = ""

@@ -234,4 +234,5 @@ def test_fork_task_copies_goal_and_gets_own_worktree(server, tmp_path):
     parent = srv.tasks.get_task(tid)
     assert child.goal == parent.goal
     assert child.acceptance_criteria == parent.acceptance_criteria
+    assert child.parent_id == parent.id
     assert child.worktree_path and child.worktree_path != parent.worktree_path

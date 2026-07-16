@@ -20,6 +20,7 @@ import json
 import shutil
 import subprocess
 import threading
+import time
 from pathlib import Path
 
 # Per-language server candidates (command + args), first that resolves wins.
@@ -190,7 +191,17 @@ class LSPServer:
 
     def definition(self, path: Path, line: int, col: int) -> dict | None:
         self._ensure_open(path)
-        return self._request("textDocument/definition", _pos(path, line, col))
+        params = _pos(path, line, col)
+        response = self._request("textDocument/definition", params)
+        # Some servers acknowledge `didOpen` before their workspace/import
+        # index is queryable and briefly return an empty definition. Use a
+        # short bounded backoff; never retry timeouts or mask an explicit error.
+        for delay in (0.2, 0.5, 1.0):
+            if response is None or "error" in response or response.get("result"):
+                break
+            time.sleep(delay)
+            response = self._request("textDocument/definition", params)
+        return response
 
     def references(self, path: Path, line: int, col: int) -> dict | None:
         self._ensure_open(path)

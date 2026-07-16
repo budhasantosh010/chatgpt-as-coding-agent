@@ -53,3 +53,20 @@ def test_known_packages_present_on_disk():
     pkgs = _discovered_packages()
     for expected in ("harness", "harness.tools", "harness.tasks"):
         assert expected in pkgs
+
+
+def test_cockpit_static_manifest_is_modular_and_complete():
+    static = REPO / "harness" / "cockpit" / "static"
+    required = {
+        "index.html", "cockpit.css", "api.mjs", "state.mjs",
+        "layout.mjs", "render.mjs", "app.mjs",
+    }
+    assets = {path.name for path in static.iterdir() if path.is_file()}
+    assert required <= assets
+    assert "cockpit.js" not in assets
+
+    package_globs = ["static/*"]
+    pyproject = (REPO / "pyproject.toml").read_text(encoding="utf-8")
+    assert all(any(fnmatch.fnmatch(f"static/{name}", glob) for glob in package_globs)
+               for name in required)
+    assert '"harness.cockpit" = ["static/*"]' in pyproject

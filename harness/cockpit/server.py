@@ -21,6 +21,8 @@ from __future__ import annotations
 import asyncio
 import json
 import secrets
+import threading
+import time
 from pathlib import Path
 
 from starlette.applications import Starlette
@@ -47,10 +49,29 @@ class Cockpit:
         self.config = config
         self.supervisor = supervisor
         self.csrf_token = secrets.token_urlsafe(24)
+        self.csp_nonce = secrets.token_urlsafe(18)
         self.ingest_token = config.event_token or secrets.token_urlsafe(24)
         self.server = HarnessServer(config)
         self.events = self.server.events  # operator actions publish here
         self.store = self.server.tasks
+        self._activity_lock = threading.Lock()
+        self._last_engine_activity: dict[str, float] = {}
+
+    def note_engine_activity(self, task_id: str | None) -> None:
+        """Record real engine use independently of model-managed task status."""
+        if not task_id:
+            return
+        with self._activity_lock:
+            self._last_engine_activity[task_id] = time.monotonic()
+
+    def recently_active_tasks(self, max_age_seconds: float = 120.0) -> list[str]:
+        now = time.monotonic()
+        with self._activity_lock:
+            stale = [tid for tid, seen in self._last_engine_activity.items()
+                     if now - seen > max_age_seconds]
+            for tid in stale:
+                self._last_engine_activity.pop(tid, None)
+            return sorted(self._last_engine_activity)
 
     def origin_ok(self, request) -> bool:
         host = f"127.0.0.1:{self.config.cockpit_port}"
@@ -94,8 +115,10 @@ def build_cockpit_app(cockpit: Cockpit) -> Starlette:
             "operator_elevated": t.operator_elevated,
             "worktree_path": t.worktree_path, "workspace_path": t.workspace_path,
             "changed_files": t.changed_files, "checkpoints": t.checkpoints,
-            "test_results": t.test_results, "acceptance_criteria": t.acceptance_criteria,
+            "commands": t.commands, "test_results": t.test_results,
+            "acceptance_criteria": t.acceptance_criteria,
             "pinned_files": t.pinned_files, "chat_url": t.chat_url,
+            "pinned": t.pinned,
             "parent_id": t.parent_id, "created": t.created, "updated": t.updated,
         }
 
@@ -107,7 +130,20 @@ def build_cockpit_app(cockpit: Cockpit) -> Starlette:
         boot = (f'<script>window.COCKPIT={{token:"{cockpit.csrf_token}",'
                 f'port:{cfg.cockpit_port}}};</script>')
         html = html.replace("<!--BOOT-->", boot)
-        return Response(html, media_type="text/html")
+        html = html.replace("<script", f'<script nonce="{cockpit.csp_nonce}"')
+        csp = (
+            "default-src 'self'; "
+            f"script-src 'self' 'nonce-{cockpit.csp_nonce}'; "
+            "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+            "connect-src 'self'; object-src 'none'; base-uri 'none'; "
+            "frame-ancestors 'none'; form-action 'self'"
+        )
+        return Response(html, media_type="text/html", headers={
+            "Content-Security-Policy": csp,
+            "X-Frame-Options": "DENY",
+            "X-Content-Type-Options": "nosniff",
+            "Referrer-Policy": "no-referrer",
+        })
 
     # ---- read endpoints (GET, origin-checked) ------------------------------
 
@@ -150,6 +186,19 @@ def build_cockpit_app(cockpit: Cockpit) -> Starlette:
             entries.append({"name": child.name, "dir": child.is_dir(),
                             "path": str(child)})
         return JSONResponse({"path": str(base), "entries": entries})
+
+    async def api_task_events(request):
+        if not cockpit.origin_ok(request):
+            return _err("forbidden", 403)
+        task_id = request.query_params.get("task_id", "")
+        if cockpit.store.get_task(task_id) is None:
+            return _err("unknown task", 404)
+        try:
+            limit = int(request.query_params.get("limit", "200"))
+        except ValueError:
+            return _err("invalid limit")
+        limit = max(1, min(limit, 500))
+        return JSONResponse({"events": cockpit.store.events(task_id, limit=limit)})
 
     async def api_diff(request):
         if not cockpit.origin_ok(request):
@@ -203,6 +252,7 @@ def build_cockpit_app(cockpit: Cockpit) -> Starlette:
         except ValueError:
             return _err("bad json")
         d = event.get("data", {})
+        cockpit.note_engine_activity(event.get("task_id"))
         # Re-publish into the cockpit bus so the SSE feed is one unified stream.
         cockpit.events.publish(event.get("type", "tool_call"),
                                task_id=event.get("task_id"), **d)
@@ -262,6 +312,28 @@ def build_cockpit_app(cockpit: Cockpit) -> Starlette:
         cockpit.store.save_task(t)
         cockpit.store.add_event(tid, "cockpit_set_mode", mode=mode)
         return JSONResponse({"ok": True, "task": task_dict(t)})
+
+    async def api_set_project_pinned(request):
+        if (g := guard(request)):
+            return g
+        body = await _json(request)
+        pinned = body.get("pinned")
+        if not isinstance(pinned, bool):
+            return _err("pinned must be a boolean")
+        if not cockpit.store.set_project_pinned(body.get("project_id", ""), pinned):
+            return _err("unknown project", 404)
+        return JSONResponse({"ok": True})
+
+    async def api_set_task_pinned(request):
+        if (g := guard(request)):
+            return g
+        body = await _json(request)
+        pinned = body.get("pinned")
+        if not isinstance(pinned, bool):
+            return _err("pinned must be a boolean")
+        if not cockpit.store.set_task_pinned(body.get("task_id", ""), pinned):
+            return _err("unknown task", 404)
+        return JSONResponse({"ok": True})
 
     async def api_fork(request):
         if (g := guard(request)):
@@ -361,7 +433,16 @@ def build_cockpit_app(cockpit: Cockpit) -> Starlette:
         t = cockpit.store.get_task(body.get("task_id"))
         if t is None:
             return _err("unknown task", 404)
-        t.chat_url = body.get("chat_url", "").strip()
+        from urllib.parse import urlsplit
+
+        chat_url = body.get("chat_url", "").strip()
+        if chat_url:
+            parsed = urlsplit(chat_url)
+            host = (parsed.hostname or "").lower()
+            if (parsed.scheme != "https" or parsed.username or parsed.password
+                    or not (host == "chatgpt.com" or host.endswith(".chatgpt.com"))):
+                return _err("chat_url must be an https://chatgpt.com URL")
+        t.chat_url = chat_url
         cockpit.store.save_task(t)
         return JSONResponse({"ok": True})
 
@@ -401,20 +482,25 @@ def build_cockpit_app(cockpit: Cockpit) -> Starlette:
         info = cockpit.supervisor.engine_busy()
         if info and not (await _json(request)).get("force"):
             return JSONResponse({"needs_confirm": True, "busy": info})
-        cockpit.supervisor.restart_engine()
-        return JSONResponse({"ok": True})
+        ready = await asyncio.to_thread(cockpit.supervisor.restart_engine)
+        if not ready:
+            return _err("engine restart timed out before readiness", 503)
+        return JSONResponse({"ok": True, "engine": "running"})
 
     routes = [
         Route("/", index),
         Route("/api/state", api_state),
         Route("/api/approvals", api_approvals),
         Route("/api/files", api_files),
+        Route("/api/task/events", api_task_events),
         Route("/api/diff", api_diff),
         Route("/events", sse),
         Route("/_ingest", ingest, methods=["POST"]),
         Route("/api/task/new", api_new_task, methods=["POST"]),
         Route("/api/project/create", api_create_project, methods=["POST"]),
         Route("/api/task/mode", api_set_mode, methods=["POST"]),
+        Route("/api/project/pinned", api_set_project_pinned, methods=["POST"]),
+        Route("/api/task/pinned", api_set_task_pinned, methods=["POST"]),
         Route("/api/task/fork", api_fork, methods=["POST"]),
         Route("/api/task/pin", api_pin_file, methods=["POST"]),
         Route("/api/task/upload", api_upload, methods=["POST"]),
@@ -434,12 +520,7 @@ def build_cockpit_app(cockpit: Cockpit) -> Starlette:
 
 
 def _all_projects(cockpit) -> list[dict]:
-    rows = []
-    with cockpit.store._lock:
-        cur = cockpit.store._db.execute("SELECT id, path, name FROM projects ORDER BY created")
-        for r in cur.fetchall():
-            rows.append({"id": r["id"], "path": r["path"], "name": r["name"]})
-    return rows
+    return cockpit.store.list_projects()
 
 
 def _confined(cockpit, path: str) -> Path:

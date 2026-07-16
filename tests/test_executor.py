@@ -6,7 +6,7 @@ from __future__ import annotations
 import asyncio
 
 from harness.config import Config
-from harness.executor import DockerExecutor, LocalExecutor, build_executor
+from harness.executor import DockerExecutor, LocalExecutor, build_executor, build_local_env
 
 
 def run(coro):
@@ -66,3 +66,22 @@ def test_spawn_argv_is_shared_seam():
     docker = DockerExecutor("alpine:3")
     assert docker.spawn_argv("ls", "/x") == docker.build_argv("ls", "/x")
     assert docker.spawn_argv("ls", "/x")[:3] == ["docker", "run", "--rm"]
+
+
+def test_local_env_preserves_windows_and_active_python_toolchain(monkeypatch):
+    expected = {
+        "APPDATA": r"C:\\Users\\me\\AppData\\Roaming",
+        "LOCALAPPDATA": r"C:\\Users\\me\\AppData\\Local",
+        "VIRTUAL_ENV": r"C:\\repo\\.venv",
+        "CONDA_PREFIX": r"C:\\miniconda3\\envs\\project",
+        "CONDA_DEFAULT_ENV": "project",
+        "PYTHONUSERBASE": r"C:\\Users\\me\\Python",
+    }
+    for key, value in expected.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setenv("OPENAI_API_KEY", "must-not-leak")
+
+    env = build_local_env()
+
+    assert {key: env.get(key) for key in expected} == expected
+    assert "OPENAI_API_KEY" not in env

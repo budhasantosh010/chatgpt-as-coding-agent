@@ -28,6 +28,11 @@ _BASE_ENV_KEYS = (
     "SystemRoot", "SystemDrive", "WINDIR", "COMSPEC", "TEMP", "TMP", "TMPDIR",
     "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TZ", "SHELL", "USER", "USERNAME",
     "LOGNAME", "PYTHONIOENCODING", "NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE",
+    # Windows user-site discovery and active interpreter environments. These
+    # are locations/selectors, not credentials; dropping them can leave a
+    # `pytest.exe` launcher on PATH while hiding the package it belongs to.
+    "APPDATA", "LOCALAPPDATA", "PROGRAMDATA",
+    "VIRTUAL_ENV", "CONDA_PREFIX", "CONDA_DEFAULT_ENV", "PYTHONUSERBASE",
 )
 
 

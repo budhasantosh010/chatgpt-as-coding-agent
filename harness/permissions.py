@@ -81,11 +81,12 @@ _SAFE_FULL: tuple[re.Pattern, ...] = tuple(
         r"(?:ls|dir|pwd|whoami|Get-ChildItem|Get-Location)(?:\s.*)?",
     )
 )
-# Local-only git operations (no remote, no hooks risk beyond what gitcmd already
-# neutralizes). Fullmatch + metachar-free, same rules as the safe tier.
+# Local-only, inspection/staging git operations. Hook-capable `git commit` is
+# deliberately excluded: raw run_command uses the host shell, not gitcmd's
+# hook-neutralized argv adapter, so it must pass through operator approval.
 _GIT_LOCAL_FULL = re.compile(
     r"git\s+(?:-C\s+\S+\s+)?(?:--no-pager\s+)?"
-    r"(?:status|log|diff|show|branch|add|commit|checkout|switch|restore|stash|"
+    r"(?:status|log|diff|show|branch|add|checkout|switch|restore|stash|"
     r"rev-parse|describe|blame|tag|worktree\s+list)(?:\s.*)?",
     re.I,
 )

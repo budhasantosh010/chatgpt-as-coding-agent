@@ -245,14 +245,27 @@ async def _call_idem(hc: HarnessContext, capability: Capability, operation_id: s
     NOT recorded (so they can be retried)."""
     store = getattr(hc, "store", None)
     tid = getattr(hc, "task_id", None)
+    request_hash = ""
     if operation_id and store is not None and tid:
+        import hashlib
+        import json
+
+        canonical = json.dumps(args, ensure_ascii=False, sort_keys=True,
+                               separators=(",", ":"), default=str)
+        request_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
         prev = store.get_operation(operation_id, tid, fn.__name__)
         if prev is not None:
+            if not prev.get("request_hash") or prev["request_hash"] != request_hash:
+                return _finalize(
+                    hc,
+                    "Error: [IDEMPOTENCY_CONFLICT] operation_id was already used "
+                    "for a different or unverifiable request",
+                )
             return _finalize(hc, prev["result"] + "\n[idempotent: cached result for this operation_id]")
     result = await _call(hc, capability, fn, *args)
     if (operation_id and store is not None and tid
             and not result.startswith("Error:") and "APPROVAL REQUIRED" not in result):
-        store.record_operation(operation_id, tid, fn.__name__, result)
+        store.record_operation(operation_id, tid, fn.__name__, result, request_hash)
     return result
 
 
@@ -786,11 +799,9 @@ def build_mcp(config: Config, server: HarnessServer) -> FastMCP:
     async def health(request):  # noqa: ANN001
         from starlette.responses import JSONResponse
 
-        return JSONResponse({
-            "status": "ok",
-            "name": "chatgpt-code-harness",
-            "mode": config.mode,
-            "sessions": len(server.session_keys),
-        })
+        # This route intentionally bypasses the secret path so local process
+        # supervisors can probe readiness. Keep the unauthenticated response
+        # minimal: no mode, session count, route, or deployment metadata.
+        return JSONResponse({"status": "ok"})
 
     return mcp

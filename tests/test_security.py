@@ -5,7 +5,10 @@ from __future__ import annotations
 import os
 
 import pytest
+from starlette.testclient import TestClient
 
+from harness.app import build_asgi_app
+from harness.config import Config
 from harness.security import SecurityError, assert_command_allowed, is_secret_path
 
 
@@ -65,3 +68,18 @@ def test_destructive_commands_blocked(cmd):
 @pytest.mark.parametrize("cmd", ["npm test", "git status", "python -m pytest", "ls -la"])
 def test_normal_commands_allowed(cmd):
     assert_command_allowed(cmd)  # does not raise
+
+
+def test_public_health_response_is_minimal_even_for_untrusted_host(tmp_path):
+    cfg = Config(workspace_roots=[tmp_path], state_dir=tmp_path / "state", secret_route="secret")
+    app, server = build_asgi_app(cfg)
+    try:
+        with TestClient(app) as client:
+            response = client.get(
+                "/health",
+                headers={"Host": "evil.example", "Origin": "https://evil.example"},
+            )
+        assert response.status_code == 200
+        assert response.json() == {"status": "ok"}
+    finally:
+        server.tasks.close()

@@ -20,6 +20,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.request
 from pathlib import Path
 
 from ..config import Config
@@ -100,10 +101,28 @@ class Supervisor:
             except OSError:
                 pass
 
-    def restart_engine(self) -> None:
+    def _probe_engine_ready(self) -> bool:
+        try:
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{self.config.port}/health", timeout=0.5
+            ) as response:
+                return response.status == 200
+        except Exception:  # noqa: BLE001 - connection refusal is expected during boot
+            return False
+
+    def wait_for_engine_ready(self, timeout: float = 10.0) -> bool:
+        deadline = time.monotonic() + max(0.0, timeout)
+        while time.monotonic() <= deadline:
+            if self._probe_engine_ready():
+                return True
+            time.sleep(0.1)
+        return False
+
+    def restart_engine(self, readiness_timeout: float = 10.0) -> bool:
         self.stop_engine()
         time.sleep(0.5)
         self.start_engine()
+        return self.wait_for_engine_ready(readiness_timeout)
 
     def engine_status(self) -> str:
         with self._engine_lock:
@@ -114,12 +133,14 @@ class Supervisor:
     def engine_busy(self) -> dict | None:
         """What a restart would interrupt (checklist 1.2): active tasks +
         background processes. Best-effort, read from shared state."""
-        active = [t.id for t in self.cockpit.store.list_tasks()
+        active = {t.id for t in self.cockpit.store.list_tasks()
                   if t.status.value in ("implementing", "validating", "repairing",
-                                        "discovering", "planning")]
+                                        "discovering", "planning")}
+        active.update(self.cockpit.recently_active_tasks())
+        active.update(a["task_id"] for a in self.cockpit.store.pending_approvals())
         if not active:
             return None
-        return {"active_tasks": active}
+        return {"active_tasks": sorted(active)}
 
     def _watchdog(self) -> None:
         # Auto-restart a crashed engine (checklist 1.3).

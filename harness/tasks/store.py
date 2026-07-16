@@ -39,6 +39,30 @@ _MIGRATIONS: list[tuple[int, list[str]]] = [
         "DROP TABLE operations",
         "ALTER TABLE operations_v2 RENAME TO operations",
     ]),
+    # v3: only one live approval prompt may exist for an exact request. Older
+    # databases can contain duplicates, so keep the earliest row before adding
+    # the partial unique index. Empty legacy hashes remain intentionally free.
+    (3, [
+        "DELETE FROM approvals WHERE rowid NOT IN ("
+        "SELECT MIN(rowid) FROM approvals "
+        "WHERE status='pending' AND COALESCE(request_hash, '') <> '' "
+        "GROUP BY task_id, action, request_hash"
+        ") AND status='pending' AND COALESCE(request_hash, '') <> ''",
+        "CREATE UNIQUE INDEX idx_approvals_pending_request "
+        "ON approvals(task_id, action, request_hash) "
+        "WHERE status='pending' AND request_hash <> ''",
+    ]),
+    # v4: project pinning is durable domain state. Task pinning lives in the
+    # backward-compatible task JSON body via Pydantic's default field.
+    (4, [
+        "ALTER TABLE projects ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0",
+    ]),
+    # v5: an idempotency key is valid only for the exact original arguments.
+    # Legacy rows have an empty hash and are treated as unverifiable instead of
+    # risking a cached result from a different request.
+    (5, [
+        "ALTER TABLE operations ADD COLUMN request_hash TEXT NOT NULL DEFAULT ''",
+    ]),
 ]
 
 
@@ -93,7 +117,29 @@ class TaskStore:
     def get_project(self, project_id: str) -> dict | None:
         with self._lock:
             r = self._db.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()
-            return dict(r) if r else None
+            if not r:
+                return None
+            project = dict(r)
+            project["pinned"] = bool(project.get("pinned"))
+            return project
+
+    def list_projects(self) -> list[dict]:
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT id, path, name, created, pinned FROM projects ORDER BY created"
+            ).fetchall()
+        projects = [dict(row) for row in rows]
+        for project in projects:
+            project["pinned"] = bool(project["pinned"])
+        return projects
+
+    def set_project_pinned(self, project_id: str, pinned: bool) -> bool:
+        with self._lock:
+            cur = self._db.execute(
+                "UPDATE projects SET pinned=? WHERE id=?", (int(bool(pinned)), project_id)
+            )
+            self._db.commit()
+            return cur.rowcount > 0
 
     # ---- tasks -------------------------------------------------------------
 
@@ -126,6 +172,14 @@ class TaskStore:
             )
             self._db.commit()
 
+    def set_task_pinned(self, task_id: str, pinned: bool) -> bool:
+        task = self.get_task(task_id)
+        if task is None:
+            return False
+        task.pinned = bool(pinned)
+        self.save_task(task)
+        return True
+
     def list_tasks(self, project_id: str | None = None, status: str | None = None) -> list[Task]:
         q = "SELECT data FROM tasks"
         clauses, params = [], []
@@ -153,12 +207,18 @@ class TaskStore:
     def events(self, task_id: str, limit: int = 30) -> list[dict]:
         with self._lock:
             rows = self._db.execute(
-                "SELECT time, type, data FROM events WHERE task_id=? ORDER BY id DESC LIMIT ?",
+                "SELECT id, task_id, time, type, data FROM events "
+                "WHERE task_id=? ORDER BY id DESC LIMIT ?",
                 (task_id, limit),
             ).fetchall()
         out = []
         for r in reversed(rows):
-            d = {"time": r["time"], "type": r["type"]}
+            d = {
+                "event_id": f"db:{r['id']}",
+                "task_id": r["task_id"],
+                "time": r["time"],
+                "type": r["type"],
+            }
             try:
                 d.update(json.loads(r["data"]))
             except ValueError:
@@ -169,8 +229,16 @@ class TaskStore:
     # ---- approvals ---------------------------------------------------------
 
     def add_approval(self, task_id: str, action: str, detail: str, request_hash: str = "") -> str:
-        aid = _sid("A")
         with self._lock:
+            if request_hash:
+                existing = self._db.execute(
+                    "SELECT id FROM approvals WHERE task_id=? AND action=? "
+                    "AND request_hash=? AND status='pending' ORDER BY created LIMIT 1",
+                    (task_id, action, request_hash),
+                ).fetchone()
+                if existing:
+                    return existing["id"]
+            aid = _sid("A")
             self._db.execute(
                 "INSERT INTO approvals (id, task_id, action, detail, status, created, decided, request_hash) "
                 "VALUES (?,?,?,?,?,?,?,?)",
@@ -234,10 +302,18 @@ class TaskStore:
             ).fetchone()
             return dict(r) if r else None
 
-    def record_operation(self, op_id: str, task_id: str, tool: str, result: str) -> None:
+    def record_operation(
+        self,
+        op_id: str,
+        task_id: str,
+        tool: str,
+        result: str,
+        request_hash: str = "",
+    ) -> None:
         with self._lock:
             self._db.execute(
-                "INSERT OR IGNORE INTO operations (op_id, task_id, tool, created, result) VALUES (?,?,?,?,?)",
-                (op_id, task_id, tool, _now_iso(), result),
+                "INSERT OR IGNORE INTO operations "
+                "(op_id, task_id, tool, created, result, request_hash) VALUES (?,?,?,?,?,?)",
+                (op_id, task_id, tool, _now_iso(), result, request_hash),
             )
             self._db.commit()

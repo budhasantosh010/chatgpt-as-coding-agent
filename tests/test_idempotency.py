@@ -39,6 +39,18 @@ def test_operation_id_skips_re_execution(tmp_path):
     assert not (ws / "a.txt").exists(), "cached replay must NOT re-execute the write"
 
 
+def test_operation_id_rejects_different_arguments(tmp_path):
+    """An idempotency key may replay only the exact original request."""
+    server, tid, ws = _server_task(tmp_path)
+    hc = server.context_for(tid, "default")
+
+    run(_call_idem(hc, Capability.WRITE, "op-collision", files.write_file, "a.txt", "first"))
+    out = run(_call_idem(hc, Capability.WRITE, "op-collision", files.write_file, "a.txt", "second"))
+
+    assert out.startswith("Error: [IDEMPOTENCY_CONFLICT]")
+    assert (ws / "a.txt").read_text() == "first"
+
+
 def test_different_operation_id_executes(tmp_path):
     server, tid, ws = _server_task(tmp_path)
     hc = server.context_for(tid, "default")

@@ -26,6 +26,7 @@ def test_classify_commands():
     assert classify_command("pytest -q") is Action.COMMAND_SAFE
     assert classify_command("some-unknown-binary --flag") is Action.COMMAND_ARBITRARY
     assert classify_command("git push origin main") is Action.GIT_REMOTE_WRITE
+    assert classify_command("git commit -m safe-looking") is Action.COMMAND_ARBITRARY
     assert classify_command("npm install left-pad") is Action.PACKAGE_INSTALL
     assert classify_command("curl https://evil.com") is Action.NETWORK
     assert classify_command("terraform apply") is Action.DEPLOYMENT
@@ -120,3 +121,13 @@ def test_auto_workspace_allows_local_but_asks_remote(tmp_path):
     # A push asks for approval.
     push = run(_call(hc, Capability.EXECUTE, shell.run_command, "git push origin main", None, 30))
     assert "APPROVAL REQUIRED" in push
+
+
+def test_raw_git_commit_never_auto_runs_repository_hooks(tmp_path):
+    server, tid, ws = _server_task(tmp_path, "auto_workspace")
+    hc = server.context_for(tid, "default")
+
+    result = run(_call(hc, Capability.EXECUTE, shell.run_command, "git commit -m test", None, 30))
+
+    assert "APPROVAL REQUIRED" in result
+    assert server.tasks.pending_approvals(tid)[0]["action"] == "command_arbitrary"

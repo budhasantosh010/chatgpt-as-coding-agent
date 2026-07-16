@@ -329,6 +329,7 @@ async def fork_task(server, task_id: str, goal: str = "", title: str = "") -> st
         permission_mode=src.permission_mode,
         acceptance_criteria=list(src.acceptance_criteria),
         plan=list(src.plan),
+        parent_id=src.id,
     )
     ws = Path(src.workspace_path)
     iso_note = "shared checkout (not a git repository)"

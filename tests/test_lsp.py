@@ -13,7 +13,7 @@ import pytest
 
 from harness.config import Config
 from harness.context import HarnessServer
-from harness.lsp import lang_for, server_for
+from harness.lsp import LSPServer, lang_for, server_for
 from harness.tasks import tools as tasktools
 from harness.tools import codeintel
 
@@ -48,6 +48,31 @@ def test_lang_detection():
     assert lang_for("a.ts") == "typescript"
     assert lang_for("a.rs") == "rust"
     assert lang_for("a.unknownext") is None
+
+
+def test_definition_retries_when_language_server_is_still_indexing(monkeypatch, tmp_path):
+    server = object.__new__(LSPServer)
+    calls = []
+    sleeps = []
+    responses = iter([
+        {"result": []},
+        {"result": []},
+        {"result": []},
+        {"result": [{"uri": "file:///lib.py"}]},
+    ])
+    server._ensure_open = lambda _path: None
+    server._request = lambda method, params: calls.append(method) or next(responses)
+    monkeypatch.setattr(
+        "harness.lsp.time",
+        type("Clock", (), {"sleep": staticmethod(sleeps.append)}),
+        raising=False,
+    )
+
+    response = server.definition(tmp_path / "app.py", 5, 12)
+
+    assert response["result"][0]["uri"].endswith("lib.py")
+    assert calls == ["textDocument/definition"] * 4
+    assert sleeps == [0.2, 0.5, 1.0]
 
 
 def test_degrades_without_server(ctx, monkeypatch):

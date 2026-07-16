@@ -54,3 +54,28 @@ def test_reap_survives_dead_pid(tmp_path):
     sup._reap_stale_engine()  # should not raise
     assert not sup._pid_file().exists()
     sup.cockpit.server.tasks.close()
+
+
+def test_recent_engine_activity_makes_new_task_busy(tmp_path):
+    sup = _sup(tmp_path)
+    pid = sup.cockpit.store.register_project(str(tmp_path / "project"), "project")
+    task = sup.cockpit.store.create_task(pid, str(tmp_path / "project"), goal="active but new")
+
+    sup.cockpit.note_engine_activity(task.id)
+
+    assert sup.engine_busy() == {"active_tasks": [task.id]}
+    sup.cockpit.server.tasks.close()
+
+
+def test_restart_waits_for_engine_readiness(tmp_path, monkeypatch):
+    sup = _sup(tmp_path)
+    calls = []
+    probes = iter([False, False, True])
+    monkeypatch.setattr(sup, "stop_engine", lambda: calls.append("stop"))
+    monkeypatch.setattr(sup, "start_engine", lambda: calls.append("start"))
+    monkeypatch.setattr(sup, "_probe_engine_ready", lambda: next(probes))
+    monkeypatch.setattr("harness.cockpit.supervisor.time.sleep", lambda _seconds: None)
+
+    assert sup.restart_engine(readiness_timeout=1) is True
+    assert calls == ["stop", "start"]
+    sup.cockpit.server.tasks.close()
