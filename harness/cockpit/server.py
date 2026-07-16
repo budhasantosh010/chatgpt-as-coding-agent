@@ -96,7 +96,7 @@ def build_cockpit_app(cockpit: Cockpit) -> Starlette:
             "changed_files": t.changed_files, "checkpoints": t.checkpoints,
             "test_results": t.test_results, "acceptance_criteria": t.acceptance_criteria,
             "pinned_files": t.pinned_files, "chat_url": t.chat_url,
-            "parent_id": t.parent_id,
+            "parent_id": t.parent_id, "created": t.created, "updated": t.updated,
         }
 
     # ---- static + bootstrap ------------------------------------------------

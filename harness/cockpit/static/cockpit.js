@@ -2,8 +2,21 @@
 const TOKEN = window.COCKPIT.token;
 let STATE = { projects: [], tasks: [], roots: [], modes: [], approvals: [] };
 let selProject = null, selTask = null, activeTab = "overview";
-let collapsed = new Set();          // collapsed project ids
-let FEED = [];                       // live activity rows (newest last)
+let collapsed = new Set();
+let FEED = [];
+
+/* ---------- theme ---------- */
+function applyThemeIcon() {
+  const dark = document.documentElement.dataset.theme === "dark";
+  document.getElementById("themeToggle").textContent = dark ? "☀" : "☾";
+}
+document.getElementById("themeToggle").onclick = () => {
+  const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+  document.documentElement.dataset.theme = next;
+  localStorage.setItem("cockpit-theme", next);
+  applyThemeIcon();
+};
+applyThemeIcon();
 
 /* ---------- API ---------- */
 async function getJSON(url) {
@@ -28,6 +41,18 @@ function toast(msg, err) {
   clearTimeout(toast._t); toast._t = setTimeout(() => (t.className = "toast"), 2800);
 }
 function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
+function timeAgo(iso) {
+  if (!iso) return "";
+  const s = (Date.now() - Date.parse(iso)) / 1000;
+  if (isNaN(s)) return "";
+  if (s < 60) return "now";
+  if (s < 3600) return Math.floor(s / 60) + "min";
+  if (s < 86400) return Math.floor(s / 3600) + "h";
+  return Math.floor(s / 86400) + "d";
+}
+
+/* ---------- icons (inline, Codex-quiet) ---------- */
+const FOLDER = `<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M1.8 4.2c0-.8.6-1.4 1.4-1.4h3l1.5 1.7h5.1c.8 0 1.4.6 1.4 1.4v6c0 .8-.6 1.4-1.4 1.4H3.2c-.8 0-1.4-.6-1.4-1.4v-7.7z"/></svg>`;
 
 /* ---------- top bar ---------- */
 function renderTop() {
@@ -35,8 +60,7 @@ function renderTop() {
   es.className = "engine-status " + (STATE.engine || "");
   document.getElementById("engineText").textContent = "engine " + (STATE.engine || "?");
   const n = (STATE.approvals || []).length;
-  const pill = document.getElementById("needsPill");
-  pill.classList.toggle("hidden", n === 0);
+  document.getElementById("needsPill").classList.toggle("hidden", n === 0);
   document.getElementById("needsCount").textContent = n;
 }
 
@@ -50,48 +74,45 @@ function statusDot(s) {
 function renderTree() {
   const tree = document.getElementById("tree");
   if (!STATE.projects.length) {
-    tree.innerHTML = `<div class="empty-hint">No projects yet.<br>Click “Add project” below to pick a folder.</div>`;
+    tree.innerHTML = `<div class="empty-hint" style="padding-left:10px">No projects yet.<br>Click “Add project” to pick a folder.</div>`;
     return;
   }
   tree.innerHTML = "";
   for (const p of STATE.projects) {
-    const tasks = STATE.tasks.filter(t => t.project_id === p.id);
+    const tasks = STATE.tasks.filter(t => t.project_id === p.id)
+      .sort((a, b) => (b.updated || "").localeCompare(a.updated || ""));
     const isCol = collapsed.has(p.id);
     const proj = document.createElement("div");
     proj.className = "proj" + (isCol ? " collapsed" : "");
     proj.innerHTML = `
       <div class="proj-row" data-pid="${p.id}">
         <span class="chev">▾</span>
+        <span class="picon">${FOLDER}</span>
         <span class="pname">${esc(p.name)}</span>
-        <span class="pcount">${tasks.length}</span>
       </div>
       <div class="sessions"></div>`;
     const row = proj.querySelector(".proj-row");
-    row.onclick = () => {
-      selProject = p.id;
-      if (isCol) collapsed.delete(p.id); else if (selProject === p.id && tasks.length) { /* keep open */ }
-      render();
-    };
+    row.onclick = () => { selProject = p.id; if (collapsed.has(p.id)) collapsed.delete(p.id); render(); };
     row.querySelector(".chev").onclick = (e) => {
       e.stopPropagation();
-      if (collapsed.has(p.id)) collapsed.delete(p.id); else collapsed.add(p.id);
+      collapsed.has(p.id) ? collapsed.delete(p.id) : collapsed.add(p.id);
       render();
     };
-    // drag files onto a project row → upload to that project's newest/only task
     row.ondragover = e => { e.preventDefault(); row.classList.add("drop-target"); };
     row.ondragleave = () => row.classList.remove("drop-target");
     row.ondrop = e => { e.preventDefault(); row.classList.remove("drop-target"); onDropFiles(e, tasks[0]); };
 
     const sc = proj.querySelector(".sessions");
     if (!tasks.length) {
-      sc.innerHTML = `<div class="empty-hint" style="padding:6px 9px">No sessions. <a href="#" data-new="${p.id}" style="color:var(--accent)">+ New</a></div>`;
+      sc.innerHTML = `<div class="empty-hint">No sessions. <a href="#" data-new="${p.id}">+ New</a></div>`;
       sc.querySelector("[data-new]").onclick = (e) => { e.preventDefault(); selProject = p.id; openNewTask(); };
     } else {
       for (const t of tasks) {
         const el = document.createElement("div");
         el.className = "session" + (selTask === t.id ? " sel" : "");
-        el.innerHTML = `<span class="sdot ${statusDot(t.status)}"></span>
-          <span class="stitle">${esc(t.title || t.goal)}</span>`;
+        el.innerHTML = `<span class="stitle">${esc(t.title || t.goal)}</span>
+          <span class="sdot ${statusDot(t.status)}"></span>
+          <span class="stime">${timeAgo(t.updated)}</span>`;
         el.onclick = () => { if (selTask !== t.id) activeTab = "overview"; selTask = t.id; selProject = p.id; render(); };
         sc.appendChild(el);
       }
@@ -109,11 +130,17 @@ function render() {
   const ws = document.getElementById("workspace");
   const t = currentTask();
   if (!t) {
-    ws.innerHTML = `<div class="ws-empty"><div>
-      <div class="big">◆</div><h2>Pick a session to get started</h2>
-      <div>Choose a project on the left, or create one, then start a session under it.</div>
-      </div></div>` + approvalsBannerHTML();
+    const proj = STATE.projects.find(p => p.id === selProject);
+    ws.innerHTML = approvalsBannerHTML() + `<div class="ws-empty"><div>
+      <div class="glyph">⌥</div>
+      <h2>Let’s build</h2>
+      <div class="proj-pick">${esc(proj ? proj.name : "pick a project")}</div>
+      <div class="hint">${proj ? "Create a session under this project, then talk to ChatGPT." : "Add or choose a project on the left."}</div>
+      ${proj ? `<div style="margin-top:20px"><button class="btn" id="emptyNew">＋ New session</button></div>` : ""}
+      </div></div>`;
     wireApprovals(ws);
+    const btn = ws.querySelector("#emptyNew");
+    if (btn) btn.onclick = openNewTask;
     return;
   }
   const proj = STATE.projects.find(p => p.id === t.project_id);
@@ -158,7 +185,7 @@ function syncTabs() {
 function renderTabBody() {
   const t = currentTask(); if (!t) return;
   const body = document.getElementById("tabBody"); if (!body) return;
-  if (activeTab === "overview") body.innerHTML = overviewHTML(t), wireOverview(body, t);
+  if (activeTab === "overview") { body.innerHTML = overviewHTML(t); wireOverview(body, t); }
   else if (activeTab === "diff") { body.innerHTML = `<div class="diff" id="diffArea">Loading diff…</div>`; loadDiff(t.id); }
   else body.innerHTML = feedHTML();
 }
@@ -166,14 +193,14 @@ function renderTabBody() {
 function overviewHTML(t) {
   const prompt = `Resume harness task ${t.id}. Pass task_id="${t.id}" to every tool call.\nGoal: ${t.goal}`;
   const isoChip = t.worktree_path
-    ? `<span class="chip accent"><span class="cdot"></span>isolated worktree</span>`
+    ? `<span class="chip ok"><span class="cdot"></span>isolated worktree</span>`
     : `<span class="chip warn"><span class="cdot"></span>shared checkout</span>`;
   return `
     <div class="card">
       <div class="meta">
         <dt>Goal</dt><dd>${esc(t.goal)}</dd>
         <dt>Task ID</dt><dd><code>${t.id}</code></dd>
-        <dt>State</dt><dd><span class="chip ${["completed","cancelled","failed"].includes(t.status)?"done":"info"}">${t.status}</span></dd>
+        <dt>State</dt><dd><span class="chip ${["completed","cancelled","failed"].includes(t.status)?"ok":"info"}">${t.status}</span></dd>
         <dt>Isolation</dt><dd>${isoChip}</dd>
         <dt>Working path</dt><dd><code>${esc(t.worktree_path || t.workspace_path)}</code></dd>
       </div>
@@ -236,14 +263,14 @@ async function loadDiff(tid) {
 }
 
 function feedHTML() {
-  if (!FEED.length) return `<div class="empty-hint">No activity yet. When ChatGPT works on a session, its tool calls stream here live.</div>`;
+  if (!FEED.length) return `<div class="empty-hint" style="padding:6px">No activity yet. When ChatGPT works on a session, its tool calls stream here live.</div>`;
   return `<div class="feed">${FEED.slice(-200).map(e=>{
     const d = e.data || {};
     return `<div class="row ${d.capability||"read"}">
       <span class="t">${(e.time||"").slice(11,19)}</span>
       <span class="tool">${esc(d.tool||"")}</span>
       <span class="detail">${esc(d.detail||"")}</span>
-      <span class="tag">${esc(d.task_id||"")}</span></div>`;
+      <span class="tag">${esc(e.task_id||"")}</span></div>`;
   }).reverse().join("")}</div>`;
 }
 
@@ -256,7 +283,7 @@ function approvalsBannerHTML() {
     ${a.map(x => `<div class="appr-item" data-aid="${x.id}">
       <span class="ac">${esc(x.detail || x.action)}</span>
       ${x.action==="command_arbitrary"?`<label class="rem"><input type="checkbox" class="remck"> remember</label>`:""}
-      <button class="btn good sm" data-dec="approve">Approve</button>
+      <button class="btn sm" data-dec="approve">Approve</button>
       <button class="btn danger sm" data-dec="deny">Deny</button>
     </div>`).join("")}
   </div>`;
@@ -327,11 +354,10 @@ function connectFeed() {
       FEED.push(JSON.parse(ev.data));
       if (FEED.length > 400) FEED = FEED.slice(-400);
       if (activeTab === "activity" && currentTask()) renderTabBody();
-      const b = document.querySelector('.tab[data-tab="activity"] .tab-badge, .tab[data-tab="activity"]');
       scheduleRefresh();
     } catch {}
   });
-  es.onerror = () => {}; // browser auto-reconnects with Last-Event-ID
+  es.onerror = () => {};
 }
 let rt = null;
 function scheduleRefresh(){ clearTimeout(rt); rt = setTimeout(refresh, 900); }
