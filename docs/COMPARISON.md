@@ -1,6 +1,9 @@
 # Side-by-side: our harness vs Codex, Claude Code, OpenCode, Cursor, Pi
 
 Researched July 2026 against live docs (not memory). Sources at the bottom.
+**Last reconciled to our actual code: 2026-07-16** — LSP, user hooks, fork,
+path-scoped rules, auto-format, and the Workbench GUI are now BUILT (they were
+gaps in the first cut of this doc). See §13 for the closed-vs-remaining ledger.
 
 **Legend**
 ```
@@ -75,7 +78,7 @@ below say ➖ (ChatGPT already does it) and some say 🚫 (needs a brain we don'
 | Glob / file find | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ `glob` (skips node_modules) |
 | Grep / regex search | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ `grep` (ripgrep) |
 | Symbol map of repo | 🟡 | ✅ (LSP) | ✅ (LSP) | ✅ | ❌ | 🟡 `repo_map` (ast+regex) |
-| **LSP: go-to-def, references, types** | 🟡 | ✅ | ✅ **40+ langs** | ✅ | ❌ | ❌ **GAP** |
+| **LSP: go-to-def, references, types** | 🟡 | ✅ | ✅ **40+ langs** | ✅ | ❌ | ✅ `lsp_definition/references/hover/symbols` (py/ts/js/rust/go; server auto-detected) |
 | **Semantic index (embeddings)** | ❌ | ❌ | ❌ | ✅ **the big one** | ❌ | ❌ **GAP** |
 | Live type errors after edit | 🟡 | ✅ | ✅ | ✅ | ❌ | 🟡 `diagnostics_check` (runs your linter) |
 
@@ -93,7 +96,7 @@ below say ➖ (ChatGPT already does it) and some say 🚫 (needs a brain we don'
 | Feature | Codex | Claude Code | OpenCode | Cursor | Pi | **OURS** |
 |---|---|---|---|---|---|---|
 | Project rules file | ✅ AGENTS.md | ✅ CLAUDE.md | ✅ AGENTS.md | ✅ `.cursor/rules` | ✅ AGENTS.md/CLAUDE.md | ✅ reads AGENTS.md/CLAUDE.md on `open_workspace` |
-| **Path-scoped rules** (load only for matching files) | 🟡 | ✅ `.claude/rules` + `paths:` | 🟡 | ✅ globs | ❌ | ❌ **GAP** |
+| **Path-scoped rules** (load only for matching files) | 🟡 | ✅ `.claude/rules` + `paths:` | 🟡 | ✅ globs | ❌ | ✅ `.harness/rules` + globs, surfaced on matching WRITE |
 | Agent-written memories | ✅ `/memories` | 🟡 | 🟡 | ✅ Memories | 🟡 | ✅ **3 tiers**: global/project/task |
 | Memory survives restart | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ (`memory/*.json`) |
 | Worktrees share project memory | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ **(git common-dir keyed)** ← ahead |
@@ -105,7 +108,7 @@ below say ➖ (ChatGPT already does it) and some say 🚫 (needs a brain we don'
 |---|---|---|---|---|---|---|
 | Sessions saved to disk | ✅ | ✅ | ✅ | ✅ | ✅ JSONL tree | ✅ **SQLite `tasks.db`** |
 | Resume a past session | ✅ `resume --last` | ✅ `--continue` | ✅ | ✅ | ✅ `/resume` | ✅ `resume_task` |
-| **Fork / branch a session** | ✅ `fork` | 🟡 rewind | 🟡 | ❌ | ✅ **`/tree` `/fork` `/clone`** | ❌ **GAP** |
+| **Fork / branch a session** | ✅ `fork` | 🟡 rewind | 🟡 | ❌ | ✅ **`/tree` `/fork` `/clone`** | ✅ `fork_task` (own worktree, lineage recorded) |
 | Archive / delete sessions | ✅ | 🟡 | ✅ | ✅ | ✅ | 🟡 `cancel_task` |
 | **Share session by link** | 🟡 cloud | 🟡 | ✅ `/share` | ✅ | ✅ `/share` | ❌ **GAP** |
 | Conversation compaction | ✅ `/compact` | ✅ | ✅ | ✅ | ✅ auto | ➖ *ChatGPT's job* |
@@ -161,7 +164,7 @@ below say ➖ (ChatGPT already does it) and some say 🚫 (needs a brain we don'
 | Commit | ✅ | ✅ | ✅ | ✅ | ✅ (bash) | ✅ `git_commit` |
 | **Repo hooks blocked from running on host** | 🟡 | 🟡 | ❌ | 🟡 | ❌ | ✅ **`no_hooks` default** ← ahead |
 | Open a PR | ✅ | ✅ | ✅ | ✅ | 🟡 | ✅ `open_pr` (approval-gated) |
-| Code review of a diff | ✅ `codex review` | ✅ `/code-review` | 🟡 | ✅ BugBot | ❌ | ❌ **GAP** |
+| Code review of a diff | ✅ `codex review` | ✅ `/code-review` | 🟡 | ✅ BugBot | ❌ | 🟡 visual diff in the Workbench; the *AI* review is ChatGPT via `git_diff` |
 
 ## 10. Extensibility
 
@@ -171,11 +174,11 @@ below say ➖ (ChatGPT already does it) and some say 🚫 (needs a brain we don'
 | **Is itself an MCP server** | ✅ `mcp-server` | 🟡 | ✅ | ❌ | ❌ | ✅ **that's the whole product** |
 | Skills (markdown capability docs) | ✅ `/skills` | ✅ | ✅ | 🟡 | ✅ | ✅ `list_skills/load_skill` |
 | Reads `~/.agents/skills` | 🟡 | 🟡 | ✅ | ❌ | ✅ | ✅ **yes, automatically** |
-| **User-configurable hooks** | ✅ | ✅ **script/HTTP/prompt/subagent** | ✅ | ✅ 4 events | ✅ TS ext | 🟡 **internal only — needs code edit — GAP** |
+| **User-configurable hooks** | ✅ | ✅ **script/HTTP/prompt/subagent** | ✅ | ✅ 4 events | ✅ TS ext | ✅ `<state_dir>/hooks.json` (operator-only, sandboxed env, pre can veto) |
 | Plugins / marketplace | ✅ | ✅ | ✅ | ✅ | ✅ npm/git | ❌ **GAP** |
 | Prompt templates / slash cmds | ✅ | ✅ | ✅ | ✅ | ✅ | 🟡 skills only |
 | SDK / programmatic embed | ✅ app-server | ✅ Agent SDK | ✅ server+SDK | 🟡 | ✅ SDK/RPC | 🟡 stdio MCP |
-| Auto-format after edit | 🟡 | 🟡 | ✅ | ✅ | ❌ | ❌ minor gap |
+| Auto-format after edit | 🟡 | 🟡 | ✅ | ✅ | ❌ | ✅ opt-in (`HARNESS_AUTO_FORMAT`; ruff/black/prettier/rustfmt/gofmt) |
 
 ## 11. Sub-agents & parallelism 🚫
 
@@ -200,7 +203,7 @@ below say ➖ (ChatGPT already does it) and some say 🚫 (needs a brain we don'
 | Pick/switch model | ✅ | ✅ | ✅ 75+ | ✅ | ✅ | ➖ ChatGPT's picker |
 | Reasoning-effort control | ✅ | ✅ | 🟡 | 🟡 | ✅ | ➖ |
 | Web search | ✅ `--search` | ✅ | 🟡 | ✅ | 🟡 | ➖ ChatGPT has it |
-| TUI / GUI | ✅ | ✅ | ✅ | ✅ IDE | ✅ | ➖ **ChatGPT IS the UI** |
+| TUI / GUI | ✅ | ✅ | ✅ | ✅ IDE | ✅ | ✅ **Workbench** (`harness up`): 3-pane operator GUI — tree+pins+search, session tabs, inspector (Activity/Changes/Terminal/Files/Approvals). Chat itself stays in ChatGPT ➖ |
 | Token/cost meter | ✅ `/usage` | ✅ `/context` | ✅ | ✅ | ✅ | ➖ (subscription — no per-token cost) |
 | Vim mode / keymaps | ✅ | 🟡 | ✅ | ✅ | ✅ | ➖ |
 | IDE extension | ✅ VS Code+JetBrains | ✅ | ✅ | ✅ *(is one)* | ❌ | 🟡 via stdio MCP |
@@ -211,40 +214,60 @@ below say ➖ (ChatGPT already does it) and some say 🚫 (needs a brain we don'
 
 ---
 
-## 13. THE HONEST SCORECARD — what we're missing
+## 13. THE HONEST SCORECARD — updated 2026-07-16
+
+Of the 12 gaps in the original 2026-07-15 scorecard, **7 are now CLOSED** (built
+and tested) and 5 remain. History preserved below so the progress is auditable.
 
 ```
- GENUINELY MISSING (could build, would add real value)
+ CLOSED SINCE 2026-07-15  (was gap → what we built)
  ────────────────────────────────────────────────────────────────
- 1. LSP / code intelligence      go-to-definition, find-references,
-                                 real types. We only run the linter.
-                                 → Claude Code, OpenCode, Cursor have it.
- 2. User-configurable hooks      ours are Python-internal; you must edit
-                                 code. Others let you drop in a script.
- 3. Plugins / packaging          no way to bundle+share a setup.
- 4. Session fork / branch        Pi's /tree /fork is genuinely nice.
- 5. Per-domain network allowlist Cursor's sandbox.json is better than
-                                 our all-or-nothing network=none.
- 6. OS-native sandbox            Codex uses Seatbelt/Landlock — works with
-                                 no Docker. We need Docker or nothing.
- 7. Path-scoped rules            load rules only for matching files.
- 8. Diff review command          `codex review` / `/code-review`.
- 9. Sandbox internal git/rg      documented limitation.
-10. Session share link           minor.
-11. Auto-format after edit       minor.
-12. Semantic/embedding index     Cursor's superpower. Needs an embed model.
+ ✔ 1. LSP / code intelligence   lsp_definition/references/hover/symbols;
+                                auto-detects pyright/pylsp/tsserver/
+                                rust-analyzer/gopls; verified cross-file.
+ ✔ 2. User-configurable hooks   <state_dir>/hooks.json — operator-only
+                                (outside every root), timeout, output cap,
+                                restricted env; pre-hooks can veto.
+ ✔ 4. Session fork / branch     fork_task: own worktree from the same
+                                base, goal/criteria copied, lineage kept.
+ ✔ 7. Path-scoped rules         .harness/rules/*.md with globs:, surfaced
+                                exactly when a WRITE touches a match.
+ ✔ 8. Diff review               visual diff in the Workbench inspector;
+                                the AI half is ChatGPT via git_diff.
+ ✔11. Auto-format after edit    opt-in post-WRITE hook (ruff/black/
+                                prettier/rustfmt/gofmt).
+ ✔ —  Operator GUI (unlisted    the WORKBENCH (`harness up`): 3-pane GUI,
+      in the original 12!)      session tabs, pins, Ctrl-K search, live
+                                activity, approvals, terminal telemetry.
 
- IMPOSSIBLE BY DESIGN (🚫 — we have no AI inside)
- ────────────────────────────────────────────────────────────────
- · autonomous sub-agents · agent teams · background agents
- · LLM command classifier · batch fan-out
- → these all require the harness to call a model = API bills = the thing
-   we exist to avoid. Pi made the identical choice.
+ STILL MISSING (could build, would add real value)
+ ────────────────────────────────────────────────────────
+   3. Plugins / marketplace      no bundle+share format. Personal tool → SKIP
+                                 unless a community forms.
+   5. Per-domain net allowlist   Cursor's sandbox.json beats our all-or-nothing
+                                 network=none. Only matters under Docker → LATER.
+   6. OS-native sandbox          Codex uses macOS Seatbelt / Linux Landlock (no
+                                 Docker). Windows has no clean equivalent, so
+                                 Docker stays our answer → LATER / RESEARCH.
+   9. Sandbox internal git/rg    they still run on the host under Docker;
+                                 hooks/config already neutralized → LATER.
+  10. Session share link         a privacy surface for a single-user tool → SKIP.
+  12. Semantic/embedding index   Cursor's superpower. Needs an embedding model; a
+                                 LOCAL free one is heavy → REVISIT only if
+                                 grep + LSP ever feel insufficient.
 
- NOT NEEDED (➖ — ChatGPT already gives you this)
- ────────────────────────────────────────────────────────────────
- · model switching · reasoning effort · web search · compaction
- · the whole UI/TUI · token meter · vim mode
+ IMPOSSIBLE BY DESIGN (🚫 — we have no AI inside the harness)
+ ────────────────────────────────────────────────────────
+   autonomous sub-agents · agent teams · background agents ·
+   LLM command classifier · batch fan-out
+   → each needs the harness to CALL a model = API bills = the very thing this
+     project exists to avoid. Pi made the identical choice. Our answer is
+     create_subtask: one ChatGPT working a checklist, sharing the worktree.
+
+ NOT NEEDED (➖ — ChatGPT already provides it)
+ ────────────────────────────────────────────────────────
+   model switching · reasoning effort · web search · compaction ·
+   the chat transcript itself · token meter · vim mode
 ```
 
 ## 14. Where we BEAT all five
@@ -262,6 +285,10 @@ below say ➖ (ChatGPT already does it) and some say 🚫 (needs a brain we don'
  ✅ Idempotency keys (operation_id) so a retry can't double-apply.
  ✅ Worktrees share project memory via git common-dir.
  ✅ Repo pre-commit hooks can't execute on your host by default.
+ ✅ Idempotency keys REJECT a reused key with different args (return
+    IDEMPOTENCY_CONFLICT) instead of silently replaying the wrong result.
+ ✅ Operator GUI where the approve buttons are physically unreachable by the
+    model (separate localhost port, never funneled, CSRF-guarded).
  ✅ Works from ANY device with ChatGPT — phone included — via the Funnel.
 ```
 
