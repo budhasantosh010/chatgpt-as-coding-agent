@@ -5,74 +5,61 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Harness Cockpit</title>
 <!--BOOT-->
-<link rel="stylesheet" href="/static/cockpit.css">
+<link rel="stylesheet" href="/static/cockpit.css?v=3">
 </head>
 <body>
-<header>
-  <div class="brand">⛭ HARNESS COCKPIT <span class="sub">operator console · localhost only</span></div>
-  <div class="engine">
-    engine: <b id="engine">…</b>
-    <button id="restart" class="btn small warn" title="Restart the engine (interrupts running tasks)">⟳ restart</button>
+<header class="topbar">
+  <div class="brand"><span class="logo">◆</span> Harness <span class="dim">Cockpit</span></div>
+  <div class="topbar-right">
+    <button class="needs-pill hidden" id="needsPill">⏸ <span id="needsCount">0</span> need you</button>
+    <span class="engine-status" id="engineStatus"><span class="dot"></span> <span id="engineText">connecting…</span></span>
+    <button class="btn ghost sm" id="restart">Restart engine</button>
   </div>
 </header>
 
-<main>
-  <!-- Column 1: projects -->
-  <section class="col projects">
-    <div class="col-head">
-      <span>PROJECTS</span>
-      <button id="addProject" class="btn small">+ Add</button>
+<div class="app">
+  <aside class="sidebar">
+    <div class="sidebar-head"><span>Projects</span>
+      <button class="icon-btn" id="addProjectTop" title="Add a project folder">＋</button></div>
+    <nav class="tree" id="tree"></nav>
+    <div class="sidebar-foot">
+      <button class="btn subtle block" id="addProject">＋ Add project</button>
     </div>
-    <ul id="projectList" class="list"></ul>
-    <div class="hint">Drop files onto a project's files panel to attach them.</div>
-  </section>
+  </aside>
 
-  <!-- Column 2: sessions (tasks) under the selected project -->
-  <section class="col sessions">
-    <div class="col-head">
-      <span>SESSIONS <small id="projName"></small></span>
-      <button id="newTask" class="btn small" disabled>+ New</button>
+  <main class="workspace" id="workspace">
+    <div class="ws-empty" id="wsEmpty">
+      <div>
+        <div class="big">◆</div>
+        <h2>Pick a session to get started</h2>
+        <div>Choose a project on the left, or create one, then start a session under it.</div>
+      </div>
     </div>
-    <ul id="taskList" class="list"></ul>
-  </section>
+  </main>
+</div>
 
-  <!-- Column 3: detail of the selected task -->
-  <section class="col detail">
-    <div class="col-head"><span>SESSION DETAIL</span></div>
-    <div id="detail" class="detail-body"><div class="empty">Select a session.</div></div>
-  </section>
-
-  <!-- Column 4: live activity + approvals -->
-  <section class="col activity">
-    <div class="col-head"><span>⚡ LIVE ACTIVITY</span>
-      <button id="clearFeed" class="btn small ghost">clear</button></div>
-    <ul id="feed" class="feed"></ul>
-    <div class="col-head"><span>⏸ NEEDS YOU</span></div>
-    <ul id="approvals" class="list approvals"></ul>
-  </section>
-</main>
-
-<!-- File-drop overlay + folder-picker dialogs are created dynamically -->
 <div id="toast" class="toast"></div>
+
 <dialog id="newTaskDlg">
   <form method="dialog">
     <h3>New session</h3>
-    <label>Goal <input id="ntGoal" placeholder="e.g. build the login page" autofocus></label>
-    <label>Mode
+    <div class="sub" id="ntProjName">in this project</div>
+    <div class="field"><label>Goal</label>
+      <input id="ntGoal" placeholder="e.g. build the login page" autofocus></div>
+    <div class="field"><label>Permission mode</label>
       <select id="ntMode">
-        <option value="auto_workspace">auto_workspace</option>
-        <option value="build_ask">build_ask</option>
-        <option value="plan">plan</option>
-        <option value="read_only">read_only</option>
-      </select>
-    </label>
-    <div class="row">
+        <option value="auto_workspace">auto_workspace — edit &amp; run freely</option>
+        <option value="build_ask">build_ask — ask before each change</option>
+        <option value="plan">plan — read-only planning</option>
+        <option value="read_only">read_only — look, don't touch</option>
+      </select></div>
+    <div class="dialog-row">
       <button value="cancel" class="btn ghost">Cancel</button>
-      <button id="ntCreate" value="ok" class="btn">Create</button>
+      <button id="ntCreate" value="ok" class="btn">Create session</button>
     </div>
   </form>
 </dialog>
 
-<script src="/static/cockpit.js"></script>
+<script src="/static/cockpit.js?v=3"></script>
 </body>
 </html>
