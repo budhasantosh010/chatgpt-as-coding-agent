@@ -284,11 +284,17 @@ def build_cockpit_app(cockpit: Cockpit) -> Starlette:
         if (g := guard(request)):
             return g
         body = await _json(request)
+        path = body.get("path", "")
         from ..tasks import tools as tt
 
         try:
-            out = await tt.create_project(cockpit.server, body.get("path", ""),
-                                          body.get("name", ""))
+            # The folder picker hands us both kinds: an existing project folder
+            # (register it) and a not-yet/empty folder (create + git init it).
+            p = Path(path).expanduser()
+            if p.is_dir() and any(p.iterdir()):
+                out = tt.register_project(cockpit.server, path, body.get("name", ""))
+            else:
+                out = await tt.create_project(cockpit.server, path, body.get("name", ""))
         except Exception as exc:  # noqa: BLE001
             return _err(str(exc))
         return JSONResponse({"message": out})
@@ -468,11 +474,13 @@ def build_cockpit_app(cockpit: Cockpit) -> Starlette:
 
         real = os.path.realpath(path)
         current = Config.load_extra_roots(cfg.state_dir)
-        if real not in current:
+        added = real not in current
+        if added:
             current.append(real)
             Config._roots_file(cfg.state_dir).write_text(
                 json.dumps(current, indent=2), encoding="utf-8")
-        return JSONResponse({"ok": True, "needs_restart": True, "root": real})
+        # Only a genuinely new root needs an engine restart to take effect.
+        return JSONResponse({"ok": True, "needs_restart": added, "root": real})
 
     async def api_restart_engine(request):
         if (g := guard(request)):

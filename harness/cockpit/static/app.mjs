@@ -76,7 +76,13 @@ async function addProject() {
     const picked = await postJSON("/api/pick_folder");
     if (!picked.path) return;
     const result = await postJSON("/api/root/add", { path: picked.path });
-    toast("Project folder added");
+    try {
+      await postJSON("/api/project/create", { path: picked.path });
+    } catch (error) {
+      toast(`Folder approved as a root, but registering failed: ${error.message} — restart the harness and click Add again.`, true);
+      return;
+    }
+    toast("Project added");
     if (result.needs_restart) await restartEngine();
     await refresh();
   } catch (error) { toast(error.message, true); }
