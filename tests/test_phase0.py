@@ -92,8 +92,10 @@ def test_create_project_inits_git_and_registers(server, tmp_path):
     assert "Project created" in out
     assert (tmp_path / "newproj" / ".git").exists()
     assert (tmp_path / "newproj" / "README.md").exists()
-    # Initial commit exists → worktree isolation works from the first task.
-    started = run(tasktools.start_task(srv, str(tmp_path / "newproj"), "first task"))
+    # Initial commit exists → worktree isolation is available from the first task
+    # (isolation="worktree" is opt-in now that in-place is the default).
+    started = run(tasktools.start_task(srv, str(tmp_path / "newproj"), "first task",
+                                       isolation="worktree"))
     assert "isolated worktree" in started
 
 
@@ -115,8 +117,13 @@ def test_create_project_nonempty_existing_refused(server, tmp_path):
 
 # ---- 0.3 shared-checkout approval ---------------------------------------------
 
-def test_workspace_isolation_needs_approval_then_works(server):
+def test_model_override_to_workspace_needs_approval(server):
+    # Updated policy: work-in-the-project-folder ("workspace") is the default and
+    # needs no approval. The gate now guards only the case where the operator
+    # configured an ISOLATED default and the MODEL overrides it to the shared
+    # checkout — that opt-out is still an operator decision.
     srv, ws = server
+    srv.config.default_isolation = "worktree"
     out = run(tasktools.start_task(srv, str(ws), "g", isolation="workspace"))
     assert "APPROVAL REQUIRED" in out
     aid = out.split("approvals approve ")[1].split()[0]
@@ -125,10 +132,16 @@ def test_workspace_isolation_needs_approval_then_works(server):
     assert "Started task" in out2 and "shared checkout" in out2
 
 
-def test_auto_isolation_needs_no_approval(server):
+def test_default_isolation_works_in_place_without_approval(server):
+    # The new default (default_isolation="workspace"): a task works IN the
+    # project folder — no worktree, no approval — like Codex/Claude Code.
     srv, ws = server
     out = run(tasktools.start_task(srv, str(ws), "g"))
     assert "Started task" in out
+    tid = out.split()[2]
+    assert srv.tasks.get_task(tid).worktree_path is None
+    hc = srv.context_for(tid, "conn")
+    assert str(hc.active_workspace) == str(ws)
 
 
 # ---- 0.6 COMMAND_SAFE tier ------------------------------------------------------

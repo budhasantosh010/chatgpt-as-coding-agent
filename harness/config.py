@@ -97,6 +97,13 @@ class Config:
     # (full / bypass_sandboxed by default) is operator-only, granted with
     # `python -m harness tasks set-mode`. This is the anti-self-escalation gate.
     max_mode: str = "auto_workspace"
+    # Where a new task's files land by default (like Codex/Claude Code, we work
+    # IN the project folder). "workspace" = edit the project checkout directly
+    # (files appear where you made the project; review via git diff — the norm
+    # for a single-user tool). "worktree" = always an isolated private copy.
+    # "auto" = worktree for git repos, shared checkout otherwise (the old
+    # default; kept for anyone who wants isolation-by-default).
+    default_isolation: str = "workspace"
     secret_route: str = ""
     bearer_token: str = ""
     state_dir: Path = field(default_factory=_default_state_dir)
@@ -208,6 +215,9 @@ class Config:
             raise ValueError(f"HARNESS_SANDBOX must be 'local' or 'docker', got {self.sandbox!r}")
         if self.arbitrary_commands not in ("allow", "ask"):
             raise ValueError(f"HARNESS_ARBITRARY_COMMANDS must be 'allow' or 'ask', got {self.arbitrary_commands!r}")
+        if self.default_isolation not in ("auto", "worktree", "workspace"):
+            raise ValueError(
+                f"HARNESS_DEFAULT_ISOLATION must be 'auto', 'worktree', or 'workspace', got {self.default_isolation!r}")
 
     @property
     def mcp_path(self) -> str:
@@ -252,6 +262,7 @@ class Config:
             mode=_env("MODE", "full"),
             no_task_mode=_env("NO_TASK_MODE", "read_only"),
             max_mode=_env("MAX_MODE", "auto_workspace"),
+            default_isolation=_env("DEFAULT_ISOLATION", "workspace"),
             secret_route=_env("SECRET_ROUTE", ""),
             bearer_token=_env("BEARER_TOKEN", ""),
             allow_ts_net=_env_bool("ALLOW_TS_NET", True),

@@ -194,6 +194,11 @@ def _cmd_doctor(config: Config) -> int:
         print("       internal git & ripgrep still run on the host (hooks/config "
               "neutralized).")
     print(f"  [ok] no-task fallback mode: {config.no_task_mode}  |  max requestable mode: {config.max_mode}")
+    _iso_note = {"workspace": "work in the project folder (like Codex/Claude Code)",
+                 "worktree": "isolated private copy per task",
+                 "auto": "worktree for git repos, shared checkout otherwise"}
+    print(f"  [ok] where new-task files go: {config.default_isolation}"
+          f"  ({_iso_note.get(config.default_isolation, '')})")
     print(f"  [ok] dedicated git_commit hooks: "
           f"{'ON (repo hooks run on host)' if config.commit_hooks else 'off (hooks neutralized)'}")
     print("       raw shell 'git commit' is never auto-classified safe; use the dedicated tool")

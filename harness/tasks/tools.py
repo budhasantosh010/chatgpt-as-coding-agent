@@ -103,7 +103,7 @@ def _shared_checkout_gate(server, ws: Path) -> str | None:
 
 
 async def start_task(server, project_path: str, goal: str, permission_mode: str = "auto_workspace",
-                     title: str = "", isolation: str = "auto") -> str:
+                     title: str = "", isolation: str = "", operator: bool = False) -> str:
     ws = _validate_workspace(server.config, project_path)
     if permission_mode not in VALID_MODES:
         raise SecurityError(f"permission_mode must be one of {VALID_MODES}, got {permission_mode!r}")
@@ -112,13 +112,20 @@ async def start_task(server, project_path: str, goal: str, permission_mode: str 
     check_ceiling(permission_mode, server.config.max_mode, server.config.sandbox)
     if not goal or not goal.strip():
         raise SecurityError("A task needs a goal.")
+    # Empty isolation => use the operator's configured default (default_isolation,
+    # normally "workspace": work in the project folder, like Codex/Claude Code).
+    default_iso = getattr(server.config, "default_isolation", "workspace")
+    model_chose = bool(isolation)
+    if not isolation:
+        isolation = default_iso
     if isolation not in ("auto", "worktree", "workspace"):
         raise SecurityError("isolation must be 'auto', 'worktree', or 'workspace'.")
-    # Checklist 0.3: the model must not silently opt out of physical isolation.
-    # Explicitly requesting the shared checkout is an operator decision — it
-    # needs a one-shot approval (auto-fallback for non-git folders is different:
-    # there is no worktree to give up, and the reply flags it).
-    if isolation == "workspace":
+    # Checklist 0.3: the MODEL must not silently opt out of physical isolation.
+    # But when the operator has CONFIGURED workspace as the default, or the
+    # operator (cockpit) starts the task, working in the checkout is the intended
+    # behavior — no gate. The gate fires only when the model itself overrides an
+    # isolation-default to grab the shared checkout.
+    if isolation == "workspace" and model_chose and not operator and default_iso != "workspace":
         gate = _shared_checkout_gate(server, ws)
         if gate is not None:
             return gate

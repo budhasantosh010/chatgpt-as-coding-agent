@@ -647,15 +647,18 @@ def build_mcp(config: Config, server: HarnessServer) -> FastMCP:
 
     @mcp.tool()
     async def start_task(project_path: str, goal: str, permission_mode: str = "auto_workspace",
-                         title: str = "", isolation: str = "auto", ctx: Context = None) -> str:
+                         title: str = "", isolation: str = "", ctx: Context = None) -> str:
         """Begin a task: bind a workspace + goal + permission mode and get a
-        task_id. Pass that task_id to every subsequent tool call so the task's
-        work is isolated from other conversations and resumable. On a git repo
-        the task gets its OWN worktree by default (isolation='auto'|'worktree';
-        pass 'workspace' to work in the shared checkout). permission_mode:
-        read_only | plan | build_ask | auto_workspace (the default and the usual
-        server ceiling — full/bypass_sandboxed are operator-only, granted locally
-        via `python -m harness tasks set-mode`)."""
+        task_id. Pass that task_id to every subsequent tool call so the task is
+        resumable. By default the task works directly IN the project folder
+        (like Codex/Claude Code) — the operator's configured default; leave
+        isolation empty to use it. Files land where the user made the project;
+        review changes with git_diff and commit when done. Pass
+        isolation='worktree' only if the user wants an isolated private copy
+        (e.g. trying two approaches in parallel). permission_mode: read_only |
+        plan | build_ask | auto_workspace (the default and usual ceiling —
+        full/bypass_sandboxed are operator-only, granted via
+        `python -m harness tasks set-mode`)."""
         return await _task_call_async(tasktools.start_task, project_path, goal, permission_mode, title, isolation)
 
     @mcp.tool()

@@ -8,7 +8,7 @@
 document.documentElement.dataset.theme = localStorage.getItem("cockpit-theme") || "light";
 </script>
 <!--BOOT-->
-<link rel="stylesheet" href="/static/cockpit.css?v=14">
+<link rel="stylesheet" href="/static/cockpit.css?v=15">
 </head>
 <body>
 <header class="titlebar">
@@ -75,6 +75,12 @@ document.documentElement.dataset.theme = localStorage.getItem("cockpit-theme") |
         <option value="read_only">Read only</option>
       </select>
     </label>
+    <label class="field">Where files go
+      <select id="ntIsolation">
+        <option value="workspace">In the project folder (recommended)</option>
+        <option value="worktree">Isolated copy (for parallel experiments)</option>
+      </select>
+    </label>
     <div class="dialog-actions">
       <button value="cancel" class="quiet-button">Cancel</button>
       <button id="ntCreate" value="ok" class="primary-button">Create session</button>
@@ -82,6 +88,6 @@ document.documentElement.dataset.theme = localStorage.getItem("cockpit-theme") |
   </form>
 </dialog>
 
-<script type="module" src="/static/app.mjs?v=14"></script>
+<script type="module" src="/static/app.mjs?v=15"></script>
 </body>
 </html>

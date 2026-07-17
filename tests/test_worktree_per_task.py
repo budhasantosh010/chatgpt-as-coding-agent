@@ -81,10 +81,25 @@ def test_two_tasks_same_project_get_disjoint_files(server):
     assert not (ws / "only-in-a.txt").exists()  # main checkout untouched
 
 
-def test_isolation_workspace_opts_out(server):
+def test_default_isolation_works_in_project_folder(server):
     srv, base = server
     ws = _git_repo(srv, base)
-    # checklist 0.3: opting out of worktree isolation needs operator approval.
+    # New default (default_isolation="workspace"): even on a git repo, the task
+    # works IN the project checkout — no worktree, no approval.
+    tid = run(tasktools.start_task(srv, str(ws), goal="g",
+                                   permission_mode="auto_workspace")).split()[2]
+    task = srv.tasks.get_task(tid)
+    assert task.worktree_path is None
+    hc = srv.context_for(tid, "conn")
+    assert str(hc.active_workspace) == str(ws)
+
+
+def test_model_override_to_workspace_opts_out_with_approval(server):
+    srv, base = server
+    ws = _git_repo(srv, base)
+    # When the operator configures an isolated default, the model overriding to
+    # the shared checkout still needs operator approval (checklist 0.3).
+    srv.config.default_isolation = "worktree"
     first = run(tasktools.start_task(srv, str(ws), goal="g",
                                      permission_mode="auto_workspace",
                                      isolation="workspace"))

@@ -267,12 +267,16 @@ def build_cockpit_app(cockpit: Cockpit) -> Starlette:
         project = body.get("project_path", "")
         goal = body.get("goal", "").strip()
         mode = body.get("mode", "auto_workspace")
+        isolation = body.get("isolation", "")  # "" => operator's configured default
         if not goal:
             return _err("a goal is required")
         from ..tasks import tools as tt
 
         try:
-            out = await tt.start_task(cockpit.server, project, goal, mode)
+            # operator=True: the cockpit IS the operator, so a workspace (in-place)
+            # choice here needs no extra approval gate.
+            out = await tt.start_task(cockpit.server, project, goal, mode,
+                                      isolation=isolation, operator=True)
         except Exception as exc:  # noqa: BLE001
             return _err(str(exc))
         if "APPROVAL REQUIRED" in out:
