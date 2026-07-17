@@ -141,6 +141,13 @@ class Config:
     # `harness commands allow`) or "allow" (the classifier is advisory only).
     # The positive SAFE tier (pytest/npm test/linters/local git…) always runs.
     arbitrary_commands: str = "ask"
+    # When a call needs approval, hold the tool call open for up to this many
+    # seconds waiting for the operator's Approve/Deny click, so the chat
+    # continues seamlessly instead of ending the model's turn. 0 = return the
+    # retry message immediately. Dataclass default is 0 (tests build Config()
+    # directly and must never block on a human); real runs load from_env, where
+    # the default is 90.
+    approval_wait_seconds: int = 0
     # Live-event push sink (set by the supervisor when it spawns the engine):
     # events POST to this localhost URL so the cockpit gets a real-time feed.
     event_sink: str = ""
@@ -218,6 +225,9 @@ class Config:
         if self.default_isolation not in ("auto", "worktree", "workspace"):
             raise ValueError(
                 f"HARNESS_DEFAULT_ISOLATION must be 'auto', 'worktree', or 'workspace', got {self.default_isolation!r}")
+        if self.approval_wait_seconds < 0:
+            raise ValueError(
+                f"HARNESS_APPROVAL_WAIT_SECONDS must be >= 0, got {self.approval_wait_seconds!r}")
 
     @property
     def mcp_path(self) -> str:
@@ -278,6 +288,7 @@ class Config:
             auto_checkpoint_interval=_env_int("AUTO_CHECKPOINT_INTERVAL", 60),
             commit_hooks=_env_bool("COMMIT_HOOKS", False),
             arbitrary_commands=_env("ARBITRARY_COMMANDS", "ask"),
+            approval_wait_seconds=_env_int("APPROVAL_WAIT_SECONDS", 90),
             event_sink=_env("EVENT_SINK", ""),
             event_token=_env("EVENT_TOKEN", ""),
             cockpit_port=_env_int("COCKPIT_PORT", 8849),

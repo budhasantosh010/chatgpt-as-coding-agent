@@ -204,6 +204,8 @@ def _cmd_doctor(config: Config) -> int:
     print("       raw shell 'git commit' is never auto-classified safe; use the dedicated tool")
     print(f"  [ok] unrecognized commands in auto_workspace: {config.arbitrary_commands}"
           + ("  (classifier is advisory, not a boundary)" if config.arbitrary_commands == "allow" else ""))
+    print(f"  [ok] approval wait: {config.approval_wait_seconds}s"
+          "  (tool call stays open while you click Approve/Deny; 0 = bounce immediately)")
     print(f"  [ok] state dir: {config.state_dir}")
     print(f"  [{'ok' if config.bearer_token else 'warn'}] bearer token: "
           f"{'set' if config.bearer_token else 'not set (secret route is the gate)'}")

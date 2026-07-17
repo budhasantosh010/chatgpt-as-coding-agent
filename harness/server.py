@@ -181,6 +181,53 @@ def _gate(hc: HarnessContext, capability: Capability | None, tool: str, command:
     )
 
 
+def _pending_approval_id(message: str) -> str | None:
+    if "approvals approve " not in message:
+        return None
+    return message.split("approvals approve ", 1)[1].split()[0]
+
+
+async def _gate_with_wait(hc: HarnessContext, capability: Capability | None, tool: str,
+                          command: str | None, detail: str | None = None) -> str | None:
+    """_gate, but instead of bouncing the model straight back with a retry
+    message, hold the tool call open (bounded by approval_wait_seconds) while
+    the operator clicks Approve/Deny in the Workbench or CLI. Approve → the
+    call proceeds as if it had always been allowed (the chat never breaks).
+    Deny → a terminal error the model must not retry (starts with "Error:" so
+    idempotency never caches it). Timeout → the classic retry message."""
+    import asyncio
+    import time as _time
+
+    message = _gate(hc, capability, tool, command, detail=detail)
+    if message is None or "APPROVAL REQUIRED" not in message:
+        return message
+    wait = int(getattr(getattr(hc, "config", None), "approval_wait_seconds", 0) or 0)
+    store = getattr(hc, "store", None)
+    aid = _pending_approval_id(message)
+    if wait <= 0 or store is None or aid is None:
+        return message
+    deadline = _time.monotonic() + wait
+    while True:
+        approval = store.get_approval(aid)
+        status = (approval or {}).get("status")
+        if approval is None:
+            return message
+        if status == "approved":
+            # Re-run the gate: it consumes the fresh grant and returns None,
+            # letting the original call proceed seamlessly.
+            return _gate(hc, capability, tool, command, detail=detail)
+        if status not in ("pending",):
+            return (
+                f"Error: [APPROVAL_DENIED] The operator denied "
+                f"'{tool}: {(detail or command or '')[:200]}'. Do not retry this "
+                f"call; ask the user how to proceed."
+            )
+        remaining = deadline - _time.monotonic()
+        if remaining <= 0:
+            return message
+        await asyncio.sleep(min(0.5, remaining))
+
+
 async def _call(hc: HarnessContext, capability: Capability | None, fn, *args) -> str:
     """Enforce permissions (mode + action class + approvals), run lifecycle hooks
     around the pure tool, and normalize expected errors. The tool name is
@@ -206,7 +253,7 @@ async def _call(hc: HarnessContext, capability: Capability | None, fn, *args) ->
             detail = command
             if detail is None and args and isinstance(args[0], str):
                 detail = args[0]
-            gate = _gate(hc, capability, fn.__name__, command, detail=detail or "")
+            gate = await _gate_with_wait(hc, capability, fn.__name__, command, detail=detail or "")
             if gate is not None:
                 return _finalize(hc, gate)
         if hooks is None:
