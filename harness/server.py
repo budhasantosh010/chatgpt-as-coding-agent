@@ -216,6 +216,10 @@ async def _gate_with_wait(hc: HarnessContext, capability: Capability | None, too
             # Re-run the gate: it consumes the fresh grant and returns None,
             # letting the original call proceed seamlessly.
             return _gate(hc, capability, tool, command, detail=detail)
+        if status == "used":
+            # A concurrent identical call consumed the grant first — not a
+            # denial. Fall back to the classic retry message.
+            return message
         if status not in ("pending",):
             return (
                 f"Error: [APPROVAL_DENIED] The operator denied "

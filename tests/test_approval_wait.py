@@ -92,3 +92,31 @@ def test_wait_zero_keeps_the_old_immediate_bounce(ctx):
 
     gate = run(_gate_with_wait(hc, Capability.EXECUTE, "run_command", CMD, detail=CMD))
     assert gate is not None and "APPROVAL REQUIRED" in gate
+
+
+def test_grant_consumed_by_twin_call_is_retry_not_denial(ctx):
+    # Two identical concurrent calls coalesce onto one approval. If the twin
+    # consumes the grant first (status "used"), the loser must get the classic
+    # retry message — NOT a false "operator denied" verdict.
+    srv, hc = ctx
+
+    def _mark_used_soon():
+        async def _inner():
+            await asyncio.sleep(0.3)
+            pending = srv.tasks.pending_approvals()
+            assert pending
+            with srv.tasks._lock:
+                srv.tasks._db.execute(
+                    "UPDATE approvals SET status='used' WHERE id=?", (pending[0]["id"],))
+                srv.tasks._db.commit()
+        return _inner
+
+    async def scenario():
+        marker = asyncio.ensure_future(_mark_used_soon()())
+        gate = await _gate_with_wait(hc, Capability.EXECUTE, "run_command", CMD, detail=CMD)
+        await marker
+        return gate
+
+    gate = run(scenario())
+    assert gate is not None and "APPROVAL REQUIRED" in gate
+    assert "APPROVAL_DENIED" not in gate
