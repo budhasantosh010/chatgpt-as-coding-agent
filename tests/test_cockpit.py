@@ -160,6 +160,24 @@ def test_create_project_then_new_session_then_setmode(client):
     assert r.status_code == 200 and r.json()["task"]["mode"] == "plan"
 
 
+def test_add_existing_nonempty_folder_registers_project(client):
+    # Regression (found by the first real-user run): "Add project folder" on an
+    # EXISTING folder approved it as a root but never registered a project, so
+    # the sidebar stayed empty. Existing non-empty folders must register.
+    c, cp, tmp = client
+    proj = tmp / "existing"
+    proj.mkdir()
+    (proj / "main.py").write_text("print('hi')\n", encoding="utf-8")
+    r = c.post("/api/project/create", json={"path": str(proj)}, headers=_hdr(cp))
+    assert r.status_code == 200 and "Project registered" in r.json()["message"]
+    st = c.get("/api/state", headers={"Origin": COCKPIT_ORIGIN}).json()
+    assert any(p["name"] == "existing" for p in st["projects"])
+    # and the frontend Add-project flow must call the registration endpoint
+    app_js = c.get("/static/app.mjs").text
+    add_fn = app_js.split("async function addProject", 1)[1].split("async function", 1)[0]
+    assert "/api/project/create" in add_fn
+
+
 def test_state_includes_command_telemetry_for_terminal_inspector(client):
     c, cp, tmp = client
     proj = tmp / "telemetry-project"
