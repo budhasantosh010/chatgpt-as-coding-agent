@@ -178,6 +178,24 @@ def test_add_existing_nonempty_folder_registers_project(client):
     assert "/api/project/create" in add_fn
 
 
+def test_cockpit_inplace_session_needs_no_approval_even_when_default_is_isolated(client):
+    # The cockpit is the operator: choosing to work in the project folder must
+    # never trigger the shared-checkout approval gate, even if the server's
+    # default_isolation is an isolated mode. Guards the operator=True bypass.
+    c, cp, tmp = client
+    cp.server.config.default_isolation = "worktree"
+    proj = tmp / "inplace"
+    c.post("/api/project/create", json={"path": str(proj)}, headers=_hdr(cp))
+    r = c.post("/api/task/new",
+               json={"project_path": str(proj), "goal": "work here",
+                     "mode": "auto_workspace", "isolation": "workspace"},
+               headers=_hdr(cp))
+    assert r.status_code == 200
+    body = r.json()
+    assert not body.get("needs_approval"), body
+    assert "APPROVAL REQUIRED" not in body.get("message", "")
+
+
 def test_state_includes_command_telemetry_for_terminal_inspector(client):
     c, cp, tmp = client
     proj = tmp / "telemetry-project"

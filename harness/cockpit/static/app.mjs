@@ -196,7 +196,8 @@ document.getElementById("ntCreate").addEventListener("click", async (event) => {
   const project = store.state.data.projects.find((item) => item.id === store.state.selectedProject);
   const goal = document.getElementById("ntGoal").value.trim();
   const mode = document.getElementById("ntMode").value;
-  const isolation = document.getElementById("ntIsolation").value;
+  const isoEl = document.getElementById("ntIsolation");
+  const isolation = isoEl ? isoEl.value : "";  // "" => server's configured default
   if (!project || !goal) { toast("Choose a project and enter a goal", true); return; }
   try {
     const result = await postJSON("/api/task/new", { project_path: project.path, goal, mode, isolation });

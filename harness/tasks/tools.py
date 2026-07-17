@@ -152,6 +152,8 @@ async def start_task(server, project_path: str, goal: str, permission_mode: str 
         server.tasks.save_task(task)
         iso_note = note
     active = task.worktree_path or str(ws)
+    tail = ("stays isolated and resumable" if task.worktree_path
+            else "is tracked and resumable")
     return (
         f"Started task {task.id}\n"
         f"  goal: {task.goal}\n"
@@ -160,7 +162,7 @@ async def start_task(server, project_path: str, goal: str, permission_mode: str 
         f"  permission mode: {permission_mode}\n"
         f"  state: {task.status.value}\n\n"
         f"Pass task_id=\"{task.id}\" to every tool call for this task so its work "
-        f"stays isolated and resumable."
+        f"{tail}."
     )
 
 
