@@ -86,7 +86,7 @@ async def list_skills(hc: HarnessContext) -> str:
     return "\n".join(lines)
 
 
-async def load_skill(hc: HarnessContext, name: str) -> str:
+async def load_skill(hc: HarnessContext, name: str, offset: int = 0) -> str:
     skills = _discover(hc)
     match = next((s for s in skills if s["name"] == name), None)
     if match is None:
@@ -96,9 +96,17 @@ async def load_skill(hc: HarnessContext, name: str) -> str:
         content = Path(match["path"]).read_text(encoding="utf-8", errors="replace")
     except OSError as exc:
         return f"Error reading skill {name!r}: {exc}"
-    truncated = ""
-    if len(content) > _MAX_SKILL_CHARS:
-        content = content[:_MAX_SKILL_CHARS]
-        truncated = f"\n\n[skill truncated at {_MAX_SKILL_CHARS} chars]"
-    hc.log("load_skill", name=name)
-    return content + truncated
+    offset = max(0, int(offset))
+    if offset >= len(content):
+        return (f"Skill {name!r} is {len(content)} chars; offset {offset} is past "
+                f"the end. Load from the start with load_skill(\"{name}\").")
+    chunk = content[offset : offset + _MAX_SKILL_CHARS]
+    tail = ""
+    end = offset + len(chunk)
+    if end < len(content):
+        # Long skills (e.g. a full operating doctrine) must be readable IN FULL —
+        # a silently-truncated constitution is worse than none.
+        tail = (f"\n\n[skill continues: {len(content) - end} chars remain — call "
+                f"load_skill(\"{name}\", offset={end}) for the next part]")
+    hc.log("load_skill", name=name, offset=offset)
+    return chunk + tail

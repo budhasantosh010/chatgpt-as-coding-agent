@@ -624,11 +624,13 @@ def build_mcp(config: Config, server: HarnessServer) -> FastMCP:
         return await _call(hc, Capability.READ, skills.list_skills)
 
     @mcp.tool()
-    async def load_skill(name: str, task_id: str | None = None, ctx: Context = None) -> str:
+    async def load_skill(name: str, offset: int = 0, task_id: str | None = None, ctx: Context = None) -> str:
         """Load the full content of a skill by name (from list_skills) when you
-        need its procedure. Pull skills on demand rather than guessing."""
+        need its procedure. Long skills are paged: if the reply ends with a
+        'skill continues' note, call again with the given offset until you have
+        read ALL parts — never act on a half-read skill."""
         hc = server.context_for(task_id, _session_key(ctx))
-        return await _call(hc, Capability.READ, skills.load_skill, name)
+        return await _call(hc, Capability.READ, skills.load_skill, name, offset)
 
     # ---- background processes (EXECUTE / READ) -----------------------------
 
