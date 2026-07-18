@@ -254,18 +254,98 @@ boundary (git hooks/filters neutralized), optional Docker sandbox, stdio transpo
 
 **Isolation:** pass a `task_id` (from `start_task`) to every tool call and
 concurrent conversations are isolated — separate permission mode, process owner,
-and (on a git repo) a **separate physical worktree**, so two tasks on one project
-never edit the same files. Without a `task_id`, calls share a read-only fallback
-session.
+and their own tracked state. Since 2026-07-17 tasks work **in the project
+folder by default** (like Codex/Claude Code; `HARNESS_DEFAULT_ISOLATION`);
+request `isolation='worktree'` (or the session dialog's "Isolated copy") to get
+a **separate physical worktree** so two tasks on one project never edit the
+same files. Without a `task_id`, calls share a read-only fallback session.
 
 **Roadmap (deliberately later):** git itself running inside the container (today
 it runs on host with hooks/config neutralized), full Windows process-tree kill,
 richer sandbox backends. Autonomous LLM sub-agents are N/A by design — the harness
 has no model; it offers subtasks instead.
 
+## Field-tested (July 2026): the validated architecture
+
+The architecture below is not a plan — it is the outcome of three controlled
+experiments run by the operator against the live system, each verified against
+the harness's own flight recorder (`<state_dir>/audit.jsonl` timestamps):
+
+| Experiment | Result |
+|---|---|
+| **Test 1 — sequential roles** | ✅ Two specialist roles ran strictly in order (separate tasks, zero interleaving); honest reporting. |
+| **Test 2 — "spawn parallel subagents"** | ❌ **No native subagents on a personal ChatGPT surface.** One reasoning stream interleaved the two "subagents" in a strict A-B-A-B metronome (~13 s per call, zero overlap, zero speedup vs Test 1). Only the two OS test *processes* genuinely overlapped. The model's first report overclaimed ("Subagent B didn't know the codeword") and confessed single-stream when pressed — labels prove nothing; logs do. |
+| **Test 3 — cooperative multitasking** | ✅ Told to never wait idle, the model started two 75-second jobs 13 s apart and wrote a design doc **during** their sleep window; one `read_process` per job at the end; 130 s total vs ~4 min if it had babysat. The queue works. |
+
+The four layers that follow from that evidence:
+
+```
+ AOCS skill   = HOW to think      (Specialist → Red Team → Judge, quality gates,
+                                   blackboard — a loadable markdown doctrine)
+ THE QUEUE    = WHEN to think     (never idle: fill every machine-wait with the
+                                   next task's thinking)
+ MACHINES     = the parallel part (start_process: tests/builds/linters run
+                                   concurrently; run_command blocks — one at a time)
+ HARNESS + YOU = memory & safety  (tasks.db, audit log, approvals, diff review)
+```
+
+**What can and cannot be parallel here** (the one golden rule): *thinking* is
+sequential — one model stream on chatgpt.com; *doing* is parallel — any number
+of OS processes. The only real parallel *brains* at £0 are separate ChatGPT
+chats, each a genuinely independent session (manual to orchestrate, so optional).
+
+### Asking for "parallel work" (the magic phrase)
+
+In Codex/Claude Code you'd say "spawn parallel subagents." Here that phrase
+produces roleplay (see Test 2). Ask for the validated pattern instead:
+
+> Use cooperative multitasking: split this into independent tasks; use
+> start_process for anything slow and run those jobs simultaneously; never
+> wait idle — while machines run, keep thinking on the next task; read each
+> result when ready and reconcile at the end.
+
+Or install the bundled skill ([docs/skills/harness-ultra.md](docs/skills/harness-ultra.md)
+→ copy the folder to `~/.agents/skills/`) and the whole contract shrinks to:
+
+```
+Load the skill "harness-ultra". ULTRA: <goal>
+```
+
+### Effort levels & "our ultracode"
+
+Provider effort switches (Codex `xhigh`, DeepSeek high/max, GLM …) are trained
+prompt-conditioning: the same weights, taught to reason longer when special
+control tokens appear. A local harness cannot inject those tokens into ChatGPT
+— so it ships the two levers that really exist here:
+
+1. **ChatGPT's own model/effort picker** — the genuine trained control, set by
+   the human per message; raise it for hard tasks.
+2. **Prompt-conditioning tiers** via the `harness-ultra` skill:
+   `QUICK / STANDARD / DEEP / ULTRA` map to AOCS fractal depths 0–3. ULTRA is
+   the local ultracode analog: best-of-N candidate implementations in separate
+   worktrees → parallel machine verification of all candidates → TMR
+   (solve the core twice, diff the behaviors) → blind evidence-based judging →
+   synthesis. It imitates ultracode's *discipline* (many attempts, adversarial
+   verification, evidence-first judging) while being honest that the attempts
+   run sequentially — true parallel model workers are impossible here by design.
+
+### Also proven/added in the first real-user session (2026-07-17/18)
+
+- **Tasks work IN the project folder by default** (`HARNESS_DEFAULT_ISOLATION=workspace`,
+  like Codex/Claude Code). Isolated worktrees are opt-in per session ("Where
+  files go" in the New Session dialog, or `isolation='worktree'`).
+- **Approvals hold the tool call open** (~90 s, `HARNESS_APPROVAL_WAIT_SECONDS`)
+  while the operator clicks Approve/Deny — the chat no longer breaks at every
+  approval; Deny returns a terminal error the model must not retry.
+- **Long skills load fully** — `load_skill(name, offset)` pages content so a
+  55k-char doctrine arrives complete instead of silently truncated.
+- **Background process buffers** are capped at 1 M chars per process (dashcam
+  semantics: newest output wins) and are per-task-owned — one task cannot read
+  another's processes.
+
 ## Development
 
 ```powershell
-python -m pytest tests -q     # 276 tests across security, tasks, permissions/approvals, isolation, cockpit, LSP, rules/hooks, federation, …
+python -m pytest tests -q     # 314 tests across security, tasks, permissions/approvals, isolation, cockpit, LSP, rules/hooks, federation, approval-wait, skills paging, …
 python -m harness doctor      # validate config + environment
 ```
