@@ -1,3 +1,8 @@
+import {
+  EFFORT_LEVELS, EFFORT_LABELS, ULTRA_OPTIONS, LOOPS_OPTIONS, TASK_TYPES,
+  ULTRA_CUSTOM_MAX, LOOPS_CUSTOM_MAX,
+} from "./contract-options.mjs?v=18";
+
 const INSPECTOR_TABS = [
   ["activity", "Activity"], ["changes", "Changes"], ["terminal", "Terminal"],
   ["files", "Files"], ["approvals", "Approvals"],
@@ -111,15 +116,31 @@ function contractPanel(task) {
     const warning = task.contract_error
       ? `<p><strong>Run Contract integrity error:</strong> ${esc(task.contract_error)}</p>`
       : `<p>This chat-created session has no Run Contract yet.</p>`;
+    const profiles = window.COCKPIT?.effortProfiles || {};
+    const radio = (name, value, label, checked) =>
+      `<label><input type="radio" name="${name}" value="${value}"${checked ? " checked" : ""}><span>${label}</span></label>`;
+    const segmented = (name, values, labelFor, checkedValue) =>
+      `<div class="segmented">${values.map((v) => radio(name, v, labelFor(v), v === checkedValue)).join("")}</div>`;
+    const effortLabel = (level) => {
+      const ceiling = level === "off" ? 0 : profiles[level];
+      return ceiling ? `${EFFORT_LABELS[level]} · ${ceiling}` : EFFORT_LABELS[level];
+    };
+    const countLabel = (v) => (v === "0" ? "Off" : v === "custom" ? "Custom" : v);
+    const typeLabel = (v) => v[0].toUpperCase() + v.slice(1);
     return `<section class="contract-panel">
       <div class="contract-title"><div><span class="eyebrow">Operator setup</span><strong>${task.contract_error ? "Repair contract" : "Attach run contract"}</strong></div></div>
-      ${warning}<div class="control-meters contract-setup">
-        <label><span>Task</span><select id="attachTaskType"><option value="build">Build</option><option value="review">Review</option><option value="plan">Plan</option><option value="research">Research</option></select></label>
-        <label><span>EFFORT</span><select id="attachEffort"><option value="off">Off</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="xhigh">XHigh</option><option value="max">Max</option></select></label>
-        <label><span>ULTRA</span><select id="attachUltra"><option value="0">Off</option><option value="3">3</option><option value="5">5</option><option value="8">8</option></select></label>
-        <label><span>FRAMEWORK</span><select id="attachFramework"><option value="none">None</option><option value="aocs_omega">AOCS Omega</option></select></label>
-        <label><span>LOOPS</span><select id="attachLoops"><option value="0">Off</option><option value="1">1</option><option value="3">3</option><option value="5">5</option></select></label>
-      </div><button class="primary-button small" data-action="attach-contract" type="button">${task.contract_error ? "Repair and re-confirm" : "Confirm contract"}</button>
+      ${warning}<div class="contract-setup">
+        <fieldset class="contract-row"><legend>TASK TYPE</legend>${segmented("attachTaskType", TASK_TYPES, typeLabel, "build")}</fieldset>
+        <fieldset class="contract-row"><legend>EFFORT <small>procedure credits</small></legend>${segmented("attachEffort", EFFORT_LEVELS, effortLabel, "off")}</fieldset>
+        <fieldset class="contract-row"><legend>ULTRA WORKFLOW <small>sequential candidates</small></legend>${segmented("attachUltra", ULTRA_OPTIONS, countLabel, "0")}
+          <input id="attachUltraCustom" class="attach-custom is-hidden" type="number" min="1" max="${ULTRA_CUSTOM_MAX}" value="10" aria-label="Maximum candidates"></fieldset>
+        <fieldset class="contract-row"><legend>FRAMEWORK</legend>${segmented("attachFramework", ["none", "aocs_omega"], (v) => (v === "none" ? "None" : "AOCS Omega"), "none")}</fieldset>
+        <fieldset class="contract-row"><legend>LOOPS <small>bounded refinement</small></legend>${segmented("attachLoops", LOOPS_OPTIONS, countLabel, "0")}
+          <input id="attachLoopsCustom" class="attach-custom is-hidden" type="number" min="1" max="${LOOPS_CUSTOM_MAX}" value="12" aria-label="Maximum passes"></fieldset>
+      </div>
+      <div class="contract-estimate" id="attachEstimate">Estimate: no procedure credits</div>
+      <p class="contract-warning">Confirming locks this contract permanently — it cannot be edited afterwards.</p>
+      <button class="primary-button small" data-action="attach-contract" type="button">${task.contract_error ? "Repair and re-confirm" : "Confirm contract"}</button>
     </section>`;
   }
   const spent = task.effort?.spent || 0;

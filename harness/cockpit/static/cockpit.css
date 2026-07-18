@@ -2,7 +2,7 @@
   --canvas:#ffffff; --panel:#f7f7f7; --panel-strong:#f1f1f1; --hover:#ececec; --selected:#e7e7e7;
   --line:#e4e4e4; --line-strong:#d2d2d2; --ink:#202020; --muted:#6e6e6e; --faint:#9b9b9b;
   --accent:#111111; --accent-ink:#ffffff; --blue:#3b73df; --green:#0c8a62; --amber:#a66300; --red:#c43832;
-  --left-pane:272px; --right-pane:420px; --radius:9px;
+  --left-pane:272px; --right-pane:420px; --radius:9px; --sheen:rgba(255,255,255,.28);
   --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;
   --mono:"Cascadia Code","SFMono-Regular",Consolas,monospace;
 }
@@ -10,6 +10,7 @@
   --canvas:#1d1d1f; --panel:#171719; --panel-strong:#252527; --hover:#2b2b2e; --selected:#333336;
   --line:#303033; --line-strong:#414146; --ink:#ececee; --muted:#a0a0a7; --faint:#707078;
   --accent:#eeeeef; --accent-ink:#1b1b1d; --blue:#73a4ff; --green:#52c79b; --amber:#e3a851; --red:#ff7c75;
+  --sheen:rgba(0,0,0,.14);
 }
 * { box-sizing:border-box; }
 html,body { width:100%; height:100%; margin:0; overflow:hidden; }
@@ -139,6 +140,12 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 .control-meters { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:1px; margin-top:13px; overflow:hidden; border:1px solid var(--line); border-radius:9px; background:var(--line); }
 .control-meters > div { min-width:0; padding:10px; background:var(--canvas); }.control-meters span { display:block; color:var(--faint); font-size:9px; letter-spacing:.06em; }.control-meters strong { display:block; margin-top:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11.5px; }
 .control-meters i { display:block; width:100%; height:3px; margin-top:8px; overflow:hidden; border-radius:99px; background:linear-gradient(90deg,var(--blue) var(--meter),var(--line) var(--meter)); }
+.contract-setup { display:flex; flex-direction:column; margin-top:2px; }
+.contract-setup .contract-row { margin:11px 0 0; }
+.attach-custom { width:92px; margin-top:7px; padding:5px 7px; border:1px solid var(--line-strong); border-radius:6px; background:var(--canvas); color:var(--ink); font-size:11.5px; }
+.contract-panel .contract-estimate { margin-top:14px; }
+.contract-warning { display:flex; align-items:center; gap:7px; margin:10px 1px; color:var(--amber); font-size:11px; }
+.contract-warning::before { content:"⚠"; font-size:12px; }
 .gate-list { margin:10px 0 0; padding:0; list-style:none; }.gate-list li { display:grid; grid-template-columns:72px minmax(0,1fr) auto; align-items:center; gap:10px; padding:9px 0; border-top:1px solid var(--line); }.gate-list strong,.gate-list small { display:block; }.gate-list small { margin-top:2px; color:var(--faint); font-size:10px; }
 .gate-state { padding:3px 6px; border-radius:5px; background:var(--panel-strong); color:var(--muted); font-size:9px; text-align:center; text-transform:uppercase; }.gate-state.satisfied { color:var(--green); }.gate-state.failed { color:var(--red); }
 .audit-grid { display:grid; grid-template-columns:1fr 1fr; gap:28px; }.loop-row { display:flex; align-items:center; justify-content:space-between; gap:10px; }
@@ -218,3 +225,34 @@ dialog h2 { margin:0; font-size:18px; }.dialog-subtitle { margin:3px 0 17px; col
   .workspace-scroll { padding:18px 16px 50px; }
 }
 @media (prefers-reduced-motion:reduce) { *,*::before,*::after { scroll-behavior:auto !important; transition:none !important; } }
+
+/* Motion layer: the sliding segmented thumb, credit count-up pop, and button
+   sheen. Everything here is a pure enhancement (CSS fallback keeps working
+   without JS) and is disabled wholesale by prefers-reduced-motion above. */
+.segmented { position:relative; }
+.seg-thumb { position:absolute; z-index:0; top:0; left:0; width:0; height:0; border-radius:7px; background:var(--ink); box-shadow:0 2px 8px rgba(0,0,0,.18); opacity:0; pointer-events:none; }
+.segmented.has-thumb label, .segmented.has-thumb span { position:relative; z-index:1; }
+.segmented.has-thumb input:checked + span { border-color:transparent; background:transparent; color:var(--canvas); }
+.primary-button { position:relative; overflow:hidden; }
+.primary-button::after { content:""; position:absolute; inset:0; pointer-events:none; transform:translateX(-130%) skewX(-16deg); background:linear-gradient(105deg,transparent 42%,var(--sheen) 50%,transparent 58%); }
+@media (prefers-reduced-motion:no-preference) {
+  .seg-thumb { transition:transform .34s cubic-bezier(.3,1.4,.45,1), width .34s cubic-bezier(.3,1.4,.45,1), height .2s ease, opacity .15s ease; }
+  .segmented span { transition:background .12s,border-color .12s,color .2s,transform .16s ease; }
+  .segmented label:hover input:not(:checked) + span { transform:translateY(-1px); border-color:var(--faint); }
+  .segmented label:active span { transform:scale(.94); }
+  .primary-button { transition:opacity .15s,transform .12s ease; }
+  .primary-button:hover::after { transform:translateX(130%); transition:transform .55s ease; }
+  .primary-button:active { transform:scale(.965); }
+  .contract-estimate.pop { animation:est-pop .34s cubic-bezier(.3,1.4,.45,1); }
+  .contract-panel { animation:panel-in .3s ease; }
+  .control-meters i { transition:background .4s ease; }
+}
+@keyframes est-pop {
+  0% { transform:scale(1); }
+  35% { transform:scale(1.015); border-color:var(--blue); color:var(--ink); }
+  100% { transform:scale(1); }
+}
+@keyframes panel-in {
+  from { opacity:0; transform:translateY(4px); }
+  to { opacity:1; transform:none; }
+}

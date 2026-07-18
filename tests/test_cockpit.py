@@ -90,6 +90,42 @@ def test_new_session_dialog_exposes_all_four_locked_controls(client):
     assert ">Auto<" not in ultra
 
 
+def test_contract_option_lists_cannot_drift_between_uis(client):
+    """The New Session dialog and the attach-contract panel must render the
+    same option numbers, sourced from contract-options.mjs alone (this guard
+    exists because the two UIs really did drift once: ULTRA lost '2' and
+    LOOPS showed 1/3/5)."""
+    import json
+    import re
+
+    c, cp, tmp = client
+    html = c.get("/").text
+    options = c.get("/static/contract-options.mjs").text
+    render = c.get("/static/render.mjs").text
+
+    def mjs_list(name):
+        return json.loads(re.search(rf"export const {name} = (\[[^\]]+\])", options).group(1))
+
+    def radio_values(name):
+        return re.findall(rf'name="{name}" value="([^"]+)"', html)
+
+    assert radio_values("ntEffort") == mjs_list("EFFORT_LEVELS")
+    assert radio_values("ntUltra") == mjs_list("ULTRA_OPTIONS")
+    assert radio_values("ntLoops") == mjs_list("LOOPS_OPTIONS")
+    assert radio_values("ntTaskType") == mjs_list("TASK_TYPES")
+    assert mjs_list("ULTRA_OPTIONS") == ["0", "2", "3", "5", "8", "custom"]
+    assert mjs_list("LOOPS_OPTIONS") == ["0", "2", "5", "10", "custom"]
+
+    # The attach panel renders from the shared module — never its own numbers —
+    # and must show the estimate and the permanent-lock warning before confirm.
+    assert "contract-options.mjs" in render
+    assert 'id="attachEstimate"' in render
+    assert "locks this contract permanently" in render
+    # Any literal digit inside an <option value="..."> means a hardcoded
+    # number crept back in (templates interpolate with ${...} instead).
+    assert not re.search(r'<option value="\d', render)
+
+
 def test_contract_estimate_reads_server_profiles_and_concurrency(client):
     c, cp, tmp = client
     cp.config.effort_profiles = {

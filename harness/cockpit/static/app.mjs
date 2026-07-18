@@ -1,7 +1,11 @@
-import { getJSON, postJSON } from "./api.mjs?v=17";
-import { initResizableLayout } from "./layout.mjs?v=17";
-import { mountRenderer } from "./render.mjs?v=17";
-import { createStore } from "./state.mjs?v=17";
+import { getJSON, postJSON } from "./api.mjs?v=18";
+import { initResizableLayout } from "./layout.mjs?v=18";
+import { mountRenderer } from "./render.mjs?v=18";
+import { createStore } from "./state.mjs?v=18";
+import {
+  EFFORT_LABELS, ULTRA_CUSTOM_MAX, LOOPS_CUSTOM_MAX,
+  boundedCount, contractEstimate,
+} from "./contract-options.mjs?v=18";
 
 const store = createStore();
 const loadingEvents = new Set();
@@ -70,6 +74,7 @@ function openNewTask(projectId) {
   document.getElementById("ntProjName").textContent = `In ${project.name}`;
   updateContractEstimate();
   document.getElementById("newTaskDlg").showModal();
+  wireSegmented(document.getElementById("newTaskDlg"));
 }
 
 async function addProject() {
@@ -171,15 +176,15 @@ const actions = {
   },
   async attachContract() {
     const task = currentTask(); if (!task) return;
-    const value = (id) => document.getElementById(id)?.value || "";
+    const custom = (id) => document.getElementById(id)?.value;
     try {
       await postJSON("/api/task/contract", {
-        task_id: task.id, task_type: value("attachTaskType") || "build",
-        effort_level: value("attachEffort") || "off",
-        candidate_count: Number(value("attachUltra") || 0),
+        task_id: task.id, task_type: checkedValue("attachTaskType") || "build",
+        effort_level: checkedValue("attachEffort") || "off",
+        candidate_count: boundedCount(checkedValue("attachUltra") || "0", custom("attachUltraCustom"), ULTRA_CUSTOM_MAX),
         machine_concurrency: window.COCKPIT.machineConcurrency,
-        framework: value("attachFramework") || "none",
-        max_loops: Number(value("attachLoops") || 0),
+        framework: checkedValue("attachFramework") || "none",
+        max_loops: boundedCount(checkedValue("attachLoops") || "0", custom("attachLoopsCustom"), LOOPS_CUSTOM_MAX),
       });
       toast(task.contract_error ? "Run Contract repaired" : "Run Contract confirmed");
       await refresh();
@@ -204,7 +209,16 @@ const actions = {
 };
 
 const renderer = mountRenderer(store, actions);
-store.subscribe((state) => { renderer.render(state); void loadTaskData(state); });
+store.subscribe((state) => {
+  // Live events re-render the workspace; without capture/restore that would
+  // silently reset the operator's un-confirmed contract choices to Off.
+  const saved = captureAttachChoices();
+  renderer.render(state);
+  restoreAttachChoices(saved);
+  wireSegmented();
+  updateAttachEstimate();
+  void loadTaskData(state);
+});
 initResizableLayout();
 
 document.getElementById("newSession").addEventListener("click", () => openNewTask());
@@ -224,28 +238,130 @@ document.addEventListener("keydown", (event) => {
 });
 
 const effortCeilings = { off: 0, ...(window.COCKPIT.effortProfiles || {}) };
+const concurrency = {
+  modelStreams: window.COCKPIT.modelConcurrency,
+  machineParallel: window.COCKPIT.machineConcurrency,
+};
 const selectedContractValue = (name) => document.querySelector(`input[name="${name}"]:checked`)?.value || "";
 function contractCount(name, customId, maximum) {
-  const selected = selectedContractValue(name) || "0";
-  if (selected !== "custom") return Number(selected);
-  const raw = Number(document.getElementById(customId)?.value || 1);
-  return Math.max(1, Math.min(maximum, Math.trunc(raw)));
+  return boundedCount(selectedContractValue(name) || "0",
+    document.getElementById(customId)?.value, maximum);
 }
 function updateContractEstimate() {
   const effort = selectedContractValue("ntEffort") || "off";
-  const candidates = contractCount("ntUltra", "ntUltraCustom", 64);
-  const loops = contractCount("ntLoops", "ntLoopsCustom", 100);
-  const total = effortCeilings[effort] * (1 + candidates) * (1 + loops);
-  const nudge = total > 30 ? " · expect several continue nudges" : "";
-  document.getElementById("ntEstimate").textContent = total
-    ? `Estimate: ≤ ${total} procedure credits · model streams 1 · machine parallel 2${nudge}`
-    : `Estimate: no procedure credits · model streams 1 · machine parallel 2${nudge}`;
-  const estimate = document.getElementById("ntEstimate");
-  estimate.textContent = estimate.textContent
-    .replace("model streams 1", `model streams ${window.COCKPIT.modelConcurrency}`)
-    .replace("machine parallel 2", `machine parallel ${window.COCKPIT.machineConcurrency}`);
+  animateEstimate(document.getElementById("ntEstimate"), contractEstimate({
+    ceiling: effortCeilings[effort],
+    candidates: contractCount("ntUltra", "ntUltraCustom", ULTRA_CUSTOM_MAX),
+    loops: contractCount("ntLoops", "ntLoopsCustom", LOOPS_CUSTOM_MAX),
+    ...concurrency,
+  }));
 }
+// The New Session dialog's static EFFORT labels carry the ceiling numbers;
+// sync them from the server-configured profiles so they can never lie.
+function syncDialogEffortLabels() {
+  for (const input of document.querySelectorAll('input[name="ntEffort"]')) {
+    const ceiling = input.value === "off" ? 0 : effortCeilings[input.value];
+    const span = input.nextElementSibling;
+    if (span) span.textContent = ceiling ? `${EFFORT_LABELS[input.value]} · ${ceiling}` : EFFORT_LABELS[input.value];
+  }
+}
+syncDialogEffortLabels();
 document.getElementById("newTaskDlg").addEventListener("change", updateContractEstimate);
+
+// ---- attach-contract panel (chat-created sessions) ----
+// The panel is re-rendered HTML, so wire it by delegation and refresh the
+// estimate after every render.
+function checkedValue(name) {
+  return document.querySelector(`input[name="${name}"]:checked`)?.value || "";
+}
+function captureAttachChoices() {
+  if (!document.getElementById("attachEstimate")) return null;
+  return {
+    taskId: store.state.selectedTask,
+    radios: Object.fromEntries(["attachTaskType", "attachEffort", "attachUltra", "attachFramework", "attachLoops"]
+      .map((name) => [name, checkedValue(name)])),
+    ultraCustom: document.getElementById("attachUltraCustom")?.value,
+    loopsCustom: document.getElementById("attachLoopsCustom")?.value,
+  };
+}
+function restoreAttachChoices(saved) {
+  if (!saved || !document.getElementById("attachEstimate")) return;
+  if (saved.taskId !== store.state.selectedTask) return;  // never leak picks across sessions
+  for (const [name, value] of Object.entries(saved.radios)) {
+    const input = value && document.querySelector(`input[name="${name}"][value="${CSS.escape(value)}"]`);
+    if (input) input.checked = true;
+  }
+  if (saved.ultraCustom) document.getElementById("attachUltraCustom").value = saved.ultraCustom;
+  if (saved.loopsCustom) document.getElementById("attachLoopsCustom").value = saved.loopsCustom;
+}
+function updateAttachEstimate() {
+  const estimate = document.getElementById("attachEstimate");
+  if (!estimate) return;
+  const custom = (id) => document.getElementById(id)?.value;
+  for (const [name, customId] of [["attachUltra", "attachUltraCustom"], ["attachLoops", "attachLoopsCustom"]]) {
+    document.getElementById(customId)?.classList.toggle("is-hidden", checkedValue(name) !== "custom");
+  }
+  animateEstimate(estimate, contractEstimate({
+    ceiling: effortCeilings[checkedValue("attachEffort") || "off"],
+    candidates: boundedCount(checkedValue("attachUltra") || "0", custom("attachUltraCustom"), ULTRA_CUSTOM_MAX),
+    loops: boundedCount(checkedValue("attachLoops") || "0", custom("attachLoopsCustom"), LOOPS_CUSTOM_MAX),
+    ...concurrency,
+  }));
+}
+
+// ---- motion: sliding segmented thumb + credit count-up -------------------
+// One physical thumb glides between pills (the "model picker" feel). Pure
+// enhancement: without JS the checked-pill CSS styling still works.
+const reducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+function positionThumb(group) {
+  const thumb = group.querySelector(".seg-thumb");
+  const label = group.querySelector("input:checked")?.closest("label");
+  if (!thumb) return;
+  if (!label || !label.offsetWidth) { thumb.style.opacity = "0"; return; }
+  thumb.style.opacity = "1";
+  thumb.style.width = `${label.offsetWidth}px`;
+  thumb.style.height = `${label.offsetHeight}px`;
+  thumb.style.transform = `translate(${label.offsetLeft}px, ${label.offsetTop}px)`;
+}
+function wireSegmented(root = document) {
+  for (const group of root.querySelectorAll(".segmented")) {
+    if (!group.querySelector(".seg-thumb")) {
+      const thumb = document.createElement("i");
+      thumb.className = "seg-thumb";
+      thumb.setAttribute("aria-hidden", "true");
+      group.prepend(thumb);
+      group.classList.add("has-thumb");
+    }
+    positionThumb(group);
+  }
+}
+function animateEstimate(element, text) {
+  const previous = Number(element.dataset.total || 0);
+  const next = Number(text.match(/≤ (\d+)/)?.[1] || 0);
+  element.dataset.total = String(next);
+  if (previous === next || !next || reducedMotion()) { element.textContent = text; return; }
+  const start = performance.now();
+  const step = (now) => {
+    const t = Math.min(1, (now - start) / 340);
+    const eased = 1 - (1 - t) ** 3;
+    element.textContent = text.replace(`≤ ${next}`, `≤ ${Math.round(previous + (next - previous) * eased)}`);
+    if (t < 1) requestAnimationFrame(step); else element.textContent = text;
+  };
+  requestAnimationFrame(step);
+  element.classList.remove("pop");
+  void element.offsetWidth;
+  element.classList.add("pop");
+}
+document.addEventListener("change", (event) => {
+  const target = event.target;
+  if (!(target instanceof Element)) return;
+  if (target.matches(".segmented input")) positionThumb(target.closest(".segmented"));
+  if ((target.getAttribute("name") || target.id || "").startsWith("attach")) updateAttachEstimate();
+});
+window.addEventListener("resize", () => {
+  for (const group of document.querySelectorAll(".segmented")) positionThumb(group);
+});
+wireSegmented();
 document.getElementById("ntCreate").addEventListener("click", async (event) => {
   event.preventDefault();
   const project = store.state.data.projects.find((item) => item.id === store.state.selectedProject);
