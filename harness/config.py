@@ -9,6 +9,7 @@ environment.
 from __future__ import annotations
 
 import os
+import json
 import secrets
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -174,6 +175,15 @@ class Config:
     # Other MCP servers to federate: {name: {command, args} | {url}}. From
     # HARNESS_MCP_SERVERS (JSON) or <state_dir>/mcp_servers.json.
     mcp_servers: dict = field(default_factory=dict)
+    # Four-controls runtime limits. These describe auditable procedure; they do
+    # not claim to control ChatGPT's hidden reasoning or create model streams.
+    effort_profiles: dict = field(default_factory=lambda: {
+        "low": 2, "medium": 8, "high": 16, "xhigh": 32, "max": 50,
+    })
+    model_concurrency: int = 1
+    decision_caps: dict = field(default_factory=lambda: {
+        "build": 0.2, "review": 0.8, "plan": 0.8, "research": 0.8,
+    })
 
     # ---- derived / validated ------------------------------------------------
 
@@ -228,6 +238,33 @@ class Config:
         if self.approval_wait_seconds < 0:
             raise ValueError(
                 f"HARNESS_APPROVAL_WAIT_SECONDS must be >= 0, got {self.approval_wait_seconds!r}")
+        if not isinstance(self.effort_profiles, dict) or not self.effort_profiles or any(
+            isinstance(value, bool) or not isinstance(value, int) or value <= 0
+            for value in self.effort_profiles.values()
+        ):
+            raise ValueError("HARNESS_EFFORT_PROFILES values must be positive integers")
+        missing_effort = {"low", "medium", "high", "xhigh", "max"} - set(self.effort_profiles)
+        if missing_effort:
+            raise ValueError(
+                f"HARNESS_EFFORT_PROFILES is missing: {', '.join(sorted(missing_effort))}"
+            )
+        if (isinstance(self.model_concurrency, bool)
+                or not isinstance(self.model_concurrency, int)
+                or self.model_concurrency < 1):
+            raise ValueError("HARNESS_MODEL_CONCURRENCY must be an integer of at least 1")
+        if not isinstance(self.decision_caps, dict) or not self.decision_caps or any(
+            isinstance(value, bool) or not isinstance(value, (int, float))
+            or not 0 < value <= 1
+            for value in self.decision_caps.values()
+        ):
+            raise ValueError(
+                "HARNESS_DECISION_CAPS values must be greater than 0 and at most 1"
+            )
+        missing_caps = {"build", "review", "plan", "research"} - set(self.decision_caps)
+        if missing_caps:
+            raise ValueError(
+                f"HARNESS_DECISION_CAPS is missing: {', '.join(sorted(missing_caps))}"
+            )
 
     @property
     def mcp_path(self) -> str:
@@ -266,6 +303,18 @@ class Config:
         hosts_raw = _env("ALLOWED_HOSTS")
         globs_raw = _env("EXTRA_SECRET_GLOBS")
 
+        def json_object_env(name: str, default: dict) -> dict:
+            raw = _env(name)
+            if not raw:
+                return default
+            try:
+                value = json.loads(raw)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"HARNESS_{name} must be a JSON object") from exc
+            if not isinstance(value, dict):
+                raise ValueError(f"HARNESS_{name} must be a JSON object")
+            return value
+
         kwargs: dict = dict(
             host=_env("HOST", "127.0.0.1"),
             port=_env_int("PORT", 8848),
@@ -302,6 +351,15 @@ class Config:
             sandbox_pids=_env_int("SANDBOX_PIDS", 512),
             sandbox_user=_env("SANDBOX_USER", ""),
             sandbox_readonly=_env_bool("SANDBOX_READONLY", False),
+            effort_profiles=json_object_env(
+                "EFFORT_PROFILES",
+                {"low": 2, "medium": 8, "high": 16, "xhigh": 32, "max": 50},
+            ),
+            model_concurrency=_env_int("MODEL_CONCURRENCY", 1),
+            decision_caps=json_object_env(
+                "DECISION_CAPS",
+                {"build": 0.2, "review": 0.8, "plan": 0.8, "research": 0.8},
+            ),
         )
         env_allow_raw = _env("ENV_ALLOWLIST")
         state_dir = _env("STATE_DIR")
@@ -358,6 +416,9 @@ class Config:
             "workspace_roots": [str(r) for r in self.workspace_roots],
             "allowed_origins": self.allowed_origins,
             "allowed_hosts": self.allowed_hosts + (["*.ts.net"] if self.allow_ts_net else []),
+            "effort_profiles": self.effort_profiles,
+            "model_concurrency": self.model_concurrency,
+            "decision_caps": self.decision_caps,
             "shell": self.shell or "auto",
             "stateless_http": self.stateless_http,
             "json_response": self.json_response,

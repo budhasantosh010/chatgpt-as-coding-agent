@@ -1,6 +1,6 @@
 # SPEC — The Four Independent Controls (EFFORT / ULTRA / FRAMEWORK / LOOPS)
 
-- **Version:** 1.1 (2026-07-18) — **CORRECTED + RELOCKED** after pre-build review.
+- **Version:** 1.2 (2026-07-18) — **CORRECTED + RELOCKED** after final Codex review.
 - **Revision history:**
   - v1.0 — initial locked spec (commit 87563dd).
   - v1.1 — pre-build review by Codex + GPT found 8 real defects; all fixed here:
@@ -15,6 +15,12 @@
     root scope; (7) "Auto" candidates removed (deferred — a locked contract must not
     let the model pick its own workload); (8) archive/delete extracted to a future
     spec of its own (still on the operator's pending list — extracted, not cancelled).
+  - v1.2 — final Codex review removed four remaining builder ambiguities: (1) command
+    permission and verification evidence are separate decisions — ordinary command
+    approval never makes a command proof; (2) this document contains the complete
+    canonical Run Contract instead of referring back to v1.0; (3) EFFORT Off creates
+    no credit scope (SQLite never stores “infinity”); (4) every related task carries
+    an explicit `contract_id` pointing to the same shared locked contract.
 - **Status:** LOCKED for build. Do not redesign while building.
 - **Builder:** Codex (or any coding agent). **Spec author/auditor:** Claude. **Approver:** the operator.
 - **Repo:** chatgpt-as-coding-agent (this repo). Python MCP server (`harness/`), FastMCP,
@@ -27,8 +33,8 @@
 1. **Build exactly what is written.** If something seems wrong or impossible, do NOT
    silently improvise: write the problem + your proposed change into
    `docs/specs/DEVIATIONS.md` and stop that sub-item until the operator answers.
-   (This process already worked once: the v1.0→v1.1 corrections came from exactly
-   this kind of pre-build review.)
+   (This process already worked twice: the v1.0→v1.1 and v1.1→v1.2 corrections came
+   from exactly this kind of pre-build review.)
 2. **Build in phases (§18), in order.** A phase is done only when its acceptance
    criteria pass AND its listed tests are green AND the full existing suite
    (314 tests at time of writing) stays green.
@@ -91,13 +97,14 @@
 | **receipt tier** | MACHINE (execution/write result) > SOURCE (code fact w/ refs) > DECISION (judgment). |
 | **completion gates** | Per-criterion evidence verification (§8). The ONLY thing that means "done". |
 | **ULTRA** | Orchestration of N rival solution attempts. NOT an effort level. Never called "ultracode". |
-| **candidate** | One rival attempt, created via `fork_task(candidate=True)`, own worktree, OWN credit scope. |
-| **root scope** | The main attempt's scope. Also funds orchestration + judging (there is no separate judge pot). |
+| **candidate** | One rival attempt, created via `fork_task(candidate=True)`, with its own worktree and—when EFFORT is On—its own credit scope. |
+| **root scope** | With EFFORT On, the main attempt's scope. It also funds orchestration + judging. With EFFORT Off, no root scope exists. |
 | **model concurrency** | How many model reasoning streams run at once. Currently 1. From config. |
 | **machine concurrency** | How many OS processes run at once via `start_process`. Genuinely parallel. |
 | **FRAMEWORK** | Optional reasoning doctrine the model follows (today: AOCS Omega). Never auto-enabled. |
 | **LOOPS** | Maximum evidence-gated improvement passes over the current best result. |
 | **Run Contract** | The four controls' locked configuration, in its own table, confirmed by the operator. |
+| **contract ID** | The explicit link from every related task to the same locked Run Contract. |
 | **observation** | Something the server itself recorded: a read, an execution, a per-file write. |
 | **revision** | Integer version on every task row; all writes are compare-and-swap guarded. |
 | **Chinese whispers** | Information loss between parties. This spec exists to make it zero. |
@@ -138,6 +145,9 @@ What each control is **NOT** (say this in every user-facing doc):
 Add to `Task` (pydantic, all defaulted → old rows load unchanged):
 
 ```python
+# Explicit link to the ONE locked contract shared by this task family.
+# Empty = uncontracted task = all controls Off = legacy behavior.
+contract_id: str = ""
 # Budget pot this task spends from. Empty = no effort contract in play.
 # Assigned at contract confirm (root scope) and INHERITED BY COPY by ordinary
 # subtasks/forks. Only candidate forks and the contract itself create scopes.
@@ -161,7 +171,8 @@ ALTER TABLE tasks ADD COLUMN revision INTEGER NOT NULL DEFAULT 0;
 
 -- v6b: Run Contracts — operator-owned, one per task, immutable once confirmed.
 CREATE TABLE run_contracts (
-    task_id       TEXT PRIMARY KEY,
+    contract_id   TEXT PRIMARY KEY,          -- "rc-" + hex
+    root_task_id  TEXT NOT NULL UNIQUE,
     contract_json TEXT NOT NULL,
     contract_hash TEXT NOT NULL,
     confirmed_at  TEXT NOT NULL,
@@ -172,6 +183,7 @@ CREATE TABLE run_contracts (
 -- receipts live IN the row (crash-safe); the .md file is a regenerable view.
 CREATE TABLE credit_scopes (
     scope_id   TEXT PRIMARY KEY,          -- "cs-" + hex
+    contract_id TEXT NOT NULL,
     task_id    TEXT NOT NULL,             -- the task that OWNS the pot (root or candidate)
     kind       TEXT NOT NULL,             -- root | candidate
     ceiling    INTEGER NOT NULL,
@@ -267,9 +279,11 @@ prints all three.
  ────────────────────                          ───────────────
  1. New Session dialog: pick the rows
  2. See the estimate (§13.3)
- 3. Click Confirm ──► contract row inserted
-    (immutable), root scope cs-XXXX created
-    with ceiling, task.credit_scope_id set
+ 3. Click Confirm ──► contract rc-XXXX inserted
+    (immutable), task.contract_id set.
+    EFFORT On: root scope cs-XXXX created
+    and task.credit_scope_id set.
+    EFFORT Off: no credit scope is created.
                                                4. start_task / resume_task response
                                                   INCLUDES the contract summary (pull)
                                                5. Executes under the contract
@@ -293,34 +307,66 @@ prints all three.
 
 - `create_subtask` and plain `fork_task` COPY the parent's `credit_scope_id`.
   Spends from any task in a scope count against the ONE shared ceiling.
+- Every subtask, plain fork, and candidate fork also COPIES the parent's
+  `contract_id`. Contract lookup is direct by `task.contract_id`; never guess by
+  walking parent links and never duplicate the contract row.
 - `fork_task(..., candidate=True)`: legal only under a confirmed contract with
   `ultra_enabled`; counted against `candidate_count`
-  (`Error: [CANDIDATE_LIMIT]` beyond it → extension flow); creates a NEW scope with
-  the same ceiling, kind=candidate.
+  (`Error: [CANDIDATE_LIMIT]` beyond it → extension flow). With EFFORT On it creates
+  a NEW scope with the same ceiling, kind=candidate; with EFFORT Off it creates no scope.
 - `fork_task(candidate=True)` without an ultra contract →
   `Error: [NOT_ULTRA] this task's contract has no candidates — plain fork shares
   the existing budget`.
-- **Judging/orchestration budget = the root scope.** There is no separate judge pot;
-  the estimate formula (§13.3) already counts the root scope. If judging starves the
-  root scope, that is what `request_extension(kind="credits")` is for.
-- Loop passes run in the root task and spend from the root scope.
+- **With EFFORT On, judging/orchestration budget = the root scope.** There is no
+  separate judge pot; the estimate formula (§13.3) already counts the root scope. If
+  judging starves it, use `request_extension(kind="credits")`. With EFFORT Off,
+  judging is unmetered because no credit scopes exist.
+- Loop passes run in the root task and, when EFFORT is On, spend from the root scope.
 
 ### 5.2 Contract rules
 
-- Canonical contract JSON: as v1.0 (§4.1 shape) minus nothing, plus
-  `"auto" is not a legal candidate_count`. `contract_hash` = sha256 of canonical
-  JSON (sorted keys, no whitespace) excluding the hash field. Recompute on read;
+- Canonical contract JSON (complete; builders must not consult v1.0):
+
+  ```json
+  {
+    "contract_version": 1,
+    "task_type": "build",
+    "effort_level": "high",
+    "credit_ceiling": 16,
+    "ultra_enabled": true,
+    "candidate_count": 3,
+    "machine_concurrency": 4,
+    "model_concurrency": 1,
+    "framework": "aocs_omega",
+    "max_loops": 2,
+    "early_stop": true,
+    "operator_confirmed": true,
+    "confirmed_at": "2026-07-18T12:00:00Z",
+    "contract_hash": "sha256-hex-of-canonical-json-without-this-field"
+  }
+  ```
+
+  Legal values: `task_type = build|review|plan|research`;
+  `effort_level = off|low|medium|high|xhigh|max`; `framework = none|aocs_omega`;
+  `candidate_count` is an integer (`0` when ULTRA is Off; Auto is illegal);
+  `max_loops = 0` when LOOPS is Off. When EFFORT is Off, `credit_ceiling = 0` and
+  **no credit scope exists**. `contract_hash` = sha256 of canonical JSON (sorted
+  keys, no whitespace) excluding the hash field. Recompute on read;
   mismatch → `Error: [CONTRACT_TAMPERED]`, effort/loop tools refuse, task page
   offers re-confirm.
 - **Immutable once confirmed.** The only legal mutation is the extension flow:
   `request_extension(task_id, kind, amount, reason)`, kind ∈ `credits | loops |
   candidates` → approval row (`effort_extension:<kind>:+<amount>`) →
-  `_gate_with_wait` → on approve, the server rewrites contract_json + hash in one
-  transaction and appends a `contract_extended` audit event with old/new hash.
-  kind=credits raises the ceiling of ONE named scope (parameter `scope_id`,
-  default root).
+  `_gate_with_wait` → on approve, approval consumption and the mutation occur in
+  one transaction and append a `contract_extended` audit event. Limits and root
+  credit extensions rewrite contract_json + hash. A named candidate credit
+  extension raises only that ONE scope (parameter `scope_id`) so later candidates
+  still inherit the operator-confirmed base ceiling.
 - **Chat-created tasks**: no contract = all Off = today's behavior. The operator may
   attach + confirm later from the task page while the task is non-terminal.
+- `request_extension(kind="credits")` on an EFFORT-Off contract returns
+  `Error: [EFFORT_OFF]`. Enabling a disabled control requires a new operator-confirmed
+  contract before work starts; an extension cannot silently switch EFFORT on mid-run.
 - Pull-based always. The held call is ONLY for quick mid-run approvals.
 
 ---
@@ -352,8 +398,8 @@ prints all three.
 
 ```
 begin_cycle(task_id, question, purpose="", verification_plan="") -> str
-  verification_plan: newline-separated commands the model INTENDS to run as
-  verification for this cycle (pre-registration — see §6.3 rule E2).
+  verification_plan: newline-separated commands the model INTENDS to use as proof.
+  Pre-registration records intent but does NOT by itself make a command valid proof.
   Returns: "Cycle cy-a1b2 opened. Scope cs-A (high): spent 7/16."
   Errors: [EFFORT_OFF] [NO_CREDITS] [CYCLE_OPEN] [CONTRACT_TAMPERED] [TASK_NOT_FOUND]
 
@@ -385,17 +431,36 @@ Evidence reference shapes:
 Validation (server-side, in order):
 
 ```
-1. FRESHNESS + OWNERSHIP + RELEVANCE
+1. FRESHNESS + OWNERSHIP + VERIFICATION ELIGIBILITY
    execution → exec_id exists in this task's (or same-scope tasks') observations,
-               recorded AFTER this cycle opened, AND passes ONE of:
-               E1. the command is classified as verification (test / build / lint /
-                   typecheck / diagnostics — reuse the existing command classifier
-                   categories used by the approvals allowlist), or
-               E2. the command was pre-registered in THIS cycle's verification_plan
-                   (normalized string match), or
-               E3. the command went through an operator approval.
-               ("echo hello" fails E1-E3 → the ref is invalid. Relevance beyond
-               this is human-audit territory, stated honestly.)
+               recorded AFTER this cycle opened, AND passes V1 or V2 below.
+
+               IMPORTANT — permission and proof are different questions:
+                 permission: "may this command run?"
+                 verification: "may this result count as evidence?"
+               A normal package/arbitrary-command approval answers ONLY permission.
+               It NEVER makes the result valid evidence.
+
+               V1. RECOGNIZED VERIFICATION. Add a dedicated
+                   `classify_verification_command()` containing ONLY test, build,
+                   lint, typecheck, and diagnostic commands. Do NOT reuse
+                   `permissions.classify_command()` — its safe tier intentionally
+                   includes non-proof commands such as echo, ls/dir, pwd,
+                   Get-ChildItem, Get-Location, whoami, and git status/log.
+                   The exact command must also match one pre-registered in this
+                   cycle's verification_plan (normalized exact match).
+
+               V2. CUSTOM VERIFICATION. A non-recognized command may count only
+                   after a SEPARATE operator approval whose action is
+                   `verification_evidence` and whose detail binds task_id, cycle_id,
+                   question, exact command, and the stated reason it proves the
+                   question. This is separate from any approval needed to RUN it.
+                   Trivial observation commands (echo, ls/dir, pwd, whoami,
+                   Get-ChildItem, Get-Location, git status/log) are never eligible
+                   custom verification, even if permitted to run.
+
+               Logical relevance beyond V1/V2 remains human-audit territory; the
+               server must say this honestly rather than claiming semantic proof.
    diff      → every write_id is an obs_write event (§7) recorded after cycle open;
                at least one has after_sha256 ≠ before_sha256.
    source    → file appears in this task's obs_read log (the model actually read it
@@ -520,7 +585,8 @@ evidence links.
 - Selector: `Off | 2 | 3 | 5 | 8 | Custom` (Custom behind "Advanced" with the
   wall-clock warning §13.3). No Auto in v1 (§3).
 - Candidates are built **sequentially** (model concurrency 1) via
-  `fork_task(candidate=True)`, one worktree + one fresh credit scope each; machine
+  `fork_task(candidate=True)`, one worktree each and—when EFFORT is On—one fresh
+  credit scope each; machine
   verification runs in **parallel** across candidate worktrees via `start_process`.
   UI and skill always show both numbers separately.
 - Enforcement: candidate count (§5.1), `[CANDIDATE_LIMIT]`, extension
@@ -617,7 +683,7 @@ only. This sentence goes verbatim into the loops skill.
 ### 13.2 Endpoints
 
 - `api_new_task`: accepts the new fields; on Confirm & Lock creates task + contract
-  row + root scope atomically.
+  row atomically, plus a root scope only when EFFORT is On.
 - `api_set_contract` (POST): attach/confirm on a chat-created non-terminal task;
   409 if already confirmed.
 - `api_effort_status` (GET): scopes + spends by tier, receipts list (regenerating
@@ -689,7 +755,7 @@ Each skill ends with: "The laws (one stream; start_process for slow jobs; queue 
 | 14 | Ordinary subtask/fork of contracted task | Inherits contract reference and SHARES the parent's scope — never a new budget |
 | 15 | `fork_task(candidate=True)` beyond candidate_count | `[CANDIDATE_LIMIT]` → extension |
 | 16 | `candidate=True` without ultra contract | `[NOT_ULTRA]` |
-| 17 | ULTRA on, EFFORT off | Legal: candidate scopes exist with ceiling=∞ (uncapped orchestration without metering) |
+| 17 | ULTRA on, EFFORT off | Legal: candidates share the contract but NO credit scopes exist; orchestration is unmetered |
 | 18 | Loops on, EFFORT off | Legal: passes validated at their declared kind; no credit accounting |
 | 19 | `[TASK_CONFLICT]` on save | Store retries once (reload+reapply single-field); second conflict surfaces the error |
 | 20 | Untracked file edited | Included in tree_hash + obs_write → invisible-change hole closed |
@@ -705,7 +771,7 @@ Each skill ends with: "The laws (one stream; start_process for slow jobs; queue 
 Per-operation credit leases · contract versioning chains · per-role effort
 overrides · AOCS scope selectors · "Auto" candidate selection (until a deterministic
 server rule is designed and approved) · auto-triage/reserve allocation · semantic
-relevance judgment beyond §6.3 E1–E3 · total-run credit pool enforcement (estimate
+relevance judgment beyond §6.3 V1–V2 · total-run credit pool enforcement (estimate
 display only) · archive/delete (own future spec) · AOCS Evolution (blocked until its
 stopping rule is replaced) · any model-provider API call · any UI pretending to
 control ChatGPT's native effort. Adding any of these now is a spec violation.
@@ -733,14 +799,18 @@ control ChatGPT's native effort. Adding any of these now is a spec violation.
     regenerable view whose loss loses nothing.
 16. On a contracted task, COMPLETED requires every required criterion individually
     satisfied with validated evidence; a free-form evidence string alone never completes it.
-17. Execution evidence must pass E1 (verification-classified) or E2 (pre-registered)
-    or E3 (operator-approved); `echo hello` can never back a credit.
+17. Execution evidence must pass V1 (dedicated verification classifier + pre-registration)
+    or V2 (separate evidence approval); ordinary command approval never counts as proof,
+    and trivial observation commands such as `echo hello` can never back a credit.
+18. Every contracted task has a non-empty `contract_id`; every task in its family points
+    to the same contract row. EFFORT-Off tasks have an empty `credit_scope_id` and no
+    credit-scope row.
 
 ---
 
 ## 18. Build phases — order, acceptance, tests
 
-**Phase 0 — Spec corrections. DONE (this document, v1.1).**
+**Phase 0 — Spec corrections. DONE (this document, v1.2).**
 
 **Phase 1 — Concurrency-safe storage (the floor everything stands on).**
 tasks.revision + CAS save_task, targeted setters, cockpit endpoints switched over,
@@ -765,13 +835,15 @@ Windows paths.
 **Phase 4 — EFFORT (scopes + ledger).**
 credit_scopes, the five effort tools, §6.3 validation on the Phase-2 validator,
 receipt_json + .md views, decision caps, extensions via approvals. Tests:
-`tests/test_effort_ledger.py` — spend paths per tier; E1/E2/E3 relevance rules
-(echo-hello rejection); scope sharing across subtasks (invariant 13); freshness;
+`tests/test_effort_ledger.py` — spend paths per tier; V1/V2 verification rules
+(`echo hello` rejection even after ordinary command approval); scope sharing across
+subtasks (invariant 13); contract sharing across the full task family; EFFORT-Off
+creates no scope; freshness;
 dedup; caps; exhaustion scope-wide; extension approve/deny; crash-safety (row
 without file regenerates); invariants 3, 5–8, 12, 15, 17.
 
 **Phase 5 — ULTRA enforcement.**
-candidate=True forks, new scopes, [CANDIDATE_LIMIT]/[NOT_ULTRA], extension
+candidate=True forks, conditional scopes (EFFORT On only), [CANDIDATE_LIMIT]/[NOT_ULTRA], extension
 kind=candidates. Tests: `tests/test_ultra_contract.py` incl. ultra-off unchanged
 fork_task and plain-fork-shares-scope.
 

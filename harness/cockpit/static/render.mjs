@@ -104,6 +104,56 @@ function approvalRows(approvals) {
   </div>`).join("");
 }
 
+function contractPanel(task) {
+  const contract = task.contract;
+  if (!contract) {
+    if (["completed", "failed", "cancelled"].includes(task.status)) return "";
+    const warning = task.contract_error
+      ? `<p><strong>Run Contract integrity error:</strong> ${esc(task.contract_error)}</p>`
+      : `<p>This chat-created session has no Run Contract yet.</p>`;
+    return `<section class="contract-panel">
+      <div class="contract-title"><div><span class="eyebrow">Operator setup</span><strong>${task.contract_error ? "Repair contract" : "Attach run contract"}</strong></div></div>
+      ${warning}<div class="control-meters contract-setup">
+        <label><span>Task</span><select id="attachTaskType"><option value="build">Build</option><option value="review">Review</option><option value="plan">Plan</option><option value="research">Research</option></select></label>
+        <label><span>EFFORT</span><select id="attachEffort"><option value="off">Off</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="xhigh">XHigh</option><option value="max">Max</option></select></label>
+        <label><span>ULTRA</span><select id="attachUltra"><option value="0">Off</option><option value="3">3</option><option value="5">5</option><option value="8">8</option></select></label>
+        <label><span>FRAMEWORK</span><select id="attachFramework"><option value="none">None</option><option value="aocs_omega">AOCS Omega</option></select></label>
+        <label><span>LOOPS</span><select id="attachLoops"><option value="0">Off</option><option value="1">1</option><option value="3">3</option><option value="5">5</option></select></label>
+      </div><button class="primary-button small" data-action="attach-contract" type="button">${task.contract_error ? "Repair and re-confirm" : "Confirm contract"}</button>
+    </section>`;
+  }
+  const spent = task.effort?.spent || 0;
+  const ceiling = task.effort?.ceiling || contract.credit_ceiling || 0;
+  const percent = ceiling ? Math.min(100, Math.round((spent / ceiling) * 100)) : 0;
+  const loops = task.loops || [];
+  return `<section class="contract-panel">
+    <div class="contract-title"><div><span class="eyebrow">Locked run contract</span><strong>${esc(contract.task_type)}</strong></div><code>${esc(String(contract.contract_hash).slice(0, 10))}</code></div>
+    <div class="control-meters">
+      <div><span>EFFORT</span><strong>${esc(contract.effort_level)}${ceiling ? ` · ${spent}/${ceiling}` : " · Off"}</strong><i style="--meter:${percent}%"></i></div>
+      <div><span>ULTRA</span><strong>${contract.candidate_count ? `${contract.candidate_count} candidates` : "Off"}</strong></div>
+      <div><span>FRAMEWORK</span><strong>${contract.framework === "aocs_omega" ? "AOCS Omega" : "None"}</strong></div>
+      <div><span>LOOPS</span><strong>${contract.max_loops ? `${loops.length}/${contract.max_loops} used` : "Off"}</strong></div>
+    </div>
+  </section>`;
+}
+
+function gatesPanel(task) {
+  if (!task.contract || !task.criteria_v2.length) return "";
+  return `<section class="task-section"><div class="section-heading"><h2>Acceptance gates</h2><span>${task.criteria_v2.filter((item) => item.status === "satisfied").length}/${task.criteria_v2.length}</span></div>
+    <ul class="gate-list">${task.criteria_v2.map((criterion) => `<li><span class="gate-state ${esc(criterion.status)}">${esc(criterion.status)}</span><div><strong>${esc(criterion.id)} · ${esc(criterion.text)}</strong><small>${esc(criterion.verification_kind)}${criterion.verified_at ? ` · ${esc(criterion.verified_at)}` : ""}</small>${criterion.evidence_refs?.length ? `<details><summary>Validated evidence</summary><pre>${esc(JSON.stringify(criterion.evidence_refs, null, 2))}</pre></details>` : ""}</div>${criterion.verification_kind === "operator" && criterion.status === "open" ? `<button class="quiet-button small" data-action="confirm-criterion" data-criterion="${esc(criterion.id)}" type="button">Confirm</button>` : ""}</li>`).join("")}</ul>
+  </section>`;
+}
+
+function auditPanel(task) {
+  if (!task.contract) return "";
+  const receipts = task.receipts || [];
+  const loops = task.loops || [];
+  return `<section class="task-section audit-grid">
+    <div><div class="section-heading"><h2>Receipts</h2><span>${receipts.length}</span></div>${receipts.length ? `<ul class="compact-list">${receipts.slice(-5).reverse().map((receipt) => `<li><details><summary><code>${esc(receipt.cycle_id)}</code> · ${esc(receipt.tier)}</summary><p><strong>Conclusion:</strong> ${esc(receipt.conclusion)}</p><p><strong>Decision:</strong> ${esc(receipt.decision)}</p><pre>${esc(JSON.stringify(receipt.evidence_refs || [], null, 2))}</pre></details></li>`).join("")}</ul>` : `<p>No credits spent.</p>`}</div>
+    <div><div class="section-heading"><h2>Refinement</h2><span>${loops.length}</span></div>${loops.length ? `<ul class="compact-list">${loops.slice(-5).reverse().map((loop) => `<li class="loop-row"><span><code>${esc(loop.pass_id)}</code> · ${esc(loop.status)}<small>Outcome: ${esc(loop.proposed_outcome || loop.status)} · Weakness: ${esc(loop.target_weakness)} · Directive: ${esc(loop.directive)} · Delta: ${esc(loop.delta_summary || "none")}</small></span>${loop.status === "pending_operator" ? `<button class="quiet-button small" data-action="confirm-loop" data-pass="${esc(loop.pass_id)}" type="button">Confirm</button>` : ""}</li>`).join("")}</ul>` : `<p>No passes run.</p>`}</div>
+  </section>`;
+}
+
 function workspace(state) {
   const task = state.data.tasks.find((item) => item.id === state.selectedTask);
   const project = state.data.projects.find((item) => item.id === (task?.project_id || state.selectedProject));
@@ -121,6 +171,7 @@ function workspace(state) {
       <div><p class="breadcrumb">${esc(project?.name || "Project")}${task.parent_id ? " / fork" : ""}</p><h1>${esc(task.title || task.goal)}</h1></div>
       <div class="task-actions"><select id="modeSelect" class="mode-select" aria-label="Permission mode">${state.data.modes.map((mode) => `<option value="${esc(mode)}" ${mode === task.mode ? "selected" : ""}>${esc(mode)}</option>`).join("")}</select><button class="quiet-button" data-action="fork" type="button">Fork</button><button class="primary-button" data-action="open-chat" type="button">Open ChatGPT</button></div>
     </header>
+    ${contractPanel(task)}
     <section class="resume-panel">
       <div class="eyebrow">Resume in ChatGPT</div>
       <textarea id="resumePrompt" readonly>${esc(prompt)}</textarea>
@@ -132,6 +183,8 @@ function workspace(state) {
       <div><span>Changes</span><strong>${task.changed_files.length} files</strong></div>
       <div><span>Tests</span><strong>${task.test_results.length} runs</strong></div>
     </section>
+    ${gatesPanel(task)}
+    ${auditPanel(task)}
     <section class="task-section"><h2>Goal</h2><p>${esc(task.goal)}</p></section>
     <section class="task-section"><h2>Working path</h2><code class="path-code">${esc(task.worktree_path || task.workspace_path)}</code></section>
     ${task.checkpoints.length ? `<section class="task-section"><div class="section-heading"><h2>Checkpoints</h2><span>${task.checkpoints.length}</span></div>
@@ -245,6 +298,9 @@ export function mountRenderer(store, actions) {
     if (action === "copy-prompt") actions.copyPrompt();
     if (action === "restore-checkpoint") await actions.restoreCheckpoint(control.dataset.checkpoint);
     if (action === "approval") await actions.decideApproval(control.dataset.id, control.dataset.decision);
+    if (action === "confirm-criterion") await actions.confirmCriterion(control.dataset.criterion);
+    if (action === "confirm-loop") await actions.confirmLoop(control.dataset.pass);
+    if (action === "attach-contract") await actions.attachContract();
   });
   document.getElementById("sidebarSearch").addEventListener("input", (event) => store.setSearch(event.target.value));
   workspaceEl.addEventListener("change", (event) => { if (event.target.id === "modeSelect") actions.setMode(event.target.value); });

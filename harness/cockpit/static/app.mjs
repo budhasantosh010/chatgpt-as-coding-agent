@@ -1,7 +1,7 @@
-import { getJSON, postJSON } from "./api.mjs?v=13";
-import { initResizableLayout } from "./layout.mjs?v=13";
-import { mountRenderer } from "./render.mjs?v=13";
-import { createStore } from "./state.mjs?v=13";
+import { getJSON, postJSON } from "./api.mjs?v=17";
+import { initResizableLayout } from "./layout.mjs?v=17";
+import { mountRenderer } from "./render.mjs?v=17";
+import { createStore } from "./state.mjs?v=17";
 
 const store = createStore();
 const loadingEvents = new Set();
@@ -68,6 +68,7 @@ function openNewTask(projectId) {
   const project = store.state.data.projects.find((item) => item.id === store.state.selectedProject);
   if (!project) { toast("Choose a project first", true); return; }
   document.getElementById("ntProjName").textContent = `In ${project.name}`;
+  updateContractEstimate();
   document.getElementById("newTaskDlg").showModal();
 }
 
@@ -154,6 +155,36 @@ const actions = {
     try { await postJSON("/api/approval/decide", { id, decision, remember }); toast(decision === "approve" ? "Approved" : "Denied"); await refresh(); }
     catch (error) { toast(error.message, true); }
   },
+  async confirmCriterion(criterionId) {
+    const task = currentTask(); if (!task) return;
+    try {
+      await postJSON("/api/task/criterion/operator-satisfy", { task_id: task.id, criterion_id: criterionId });
+      toast("Criterion confirmed"); await refresh();
+    } catch (error) { toast(error.message, true); }
+  },
+  async confirmLoop(passId) {
+    const task = currentTask(); if (!task) return;
+    try {
+      await postJSON("/api/task/loop/operator-confirm", { task_id: task.id, pass_id: passId });
+      toast("Refinement pass confirmed"); await refresh();
+    } catch (error) { toast(error.message, true); }
+  },
+  async attachContract() {
+    const task = currentTask(); if (!task) return;
+    const value = (id) => document.getElementById(id)?.value || "";
+    try {
+      await postJSON("/api/task/contract", {
+        task_id: task.id, task_type: value("attachTaskType") || "build",
+        effort_level: value("attachEffort") || "off",
+        candidate_count: Number(value("attachUltra") || 0),
+        machine_concurrency: window.COCKPIT.machineConcurrency,
+        framework: value("attachFramework") || "none",
+        max_loops: Number(value("attachLoops") || 0),
+      });
+      toast(task.contract_error ? "Run Contract repaired" : "Run Contract confirmed");
+      await refresh();
+    } catch (error) { toast(error.message, true); }
+  },
   wireDropzone(zone) {
     if (!zone) return;
     zone.ondragover = (event) => { event.preventDefault(); zone.classList.add("over"); };
@@ -191,6 +222,30 @@ document.addEventListener("keydown", (event) => {
     event.preventDefault(); document.getElementById("sidebarSearch").focus();
   }
 });
+
+const effortCeilings = { off: 0, ...(window.COCKPIT.effortProfiles || {}) };
+const selectedContractValue = (name) => document.querySelector(`input[name="${name}"]:checked`)?.value || "";
+function contractCount(name, customId, maximum) {
+  const selected = selectedContractValue(name) || "0";
+  if (selected !== "custom") return Number(selected);
+  const raw = Number(document.getElementById(customId)?.value || 1);
+  return Math.max(1, Math.min(maximum, Math.trunc(raw)));
+}
+function updateContractEstimate() {
+  const effort = selectedContractValue("ntEffort") || "off";
+  const candidates = contractCount("ntUltra", "ntUltraCustom", 64);
+  const loops = contractCount("ntLoops", "ntLoopsCustom", 100);
+  const total = effortCeilings[effort] * (1 + candidates) * (1 + loops);
+  const nudge = total > 30 ? " · expect several continue nudges" : "";
+  document.getElementById("ntEstimate").textContent = total
+    ? `Estimate: ≤ ${total} procedure credits · model streams 1 · machine parallel 2${nudge}`
+    : `Estimate: no procedure credits · model streams 1 · machine parallel 2${nudge}`;
+  const estimate = document.getElementById("ntEstimate");
+  estimate.textContent = estimate.textContent
+    .replace("model streams 1", `model streams ${window.COCKPIT.modelConcurrency}`)
+    .replace("machine parallel 2", `machine parallel ${window.COCKPIT.machineConcurrency}`);
+}
+document.getElementById("newTaskDlg").addEventListener("change", updateContractEstimate);
 document.getElementById("ntCreate").addEventListener("click", async (event) => {
   event.preventDefault();
   const project = store.state.data.projects.find((item) => item.id === store.state.selectedProject);
@@ -198,9 +253,18 @@ document.getElementById("ntCreate").addEventListener("click", async (event) => {
   const mode = document.getElementById("ntMode").value;
   const isoEl = document.getElementById("ntIsolation");
   const isolation = isoEl ? isoEl.value : "";  // "" => server's configured default
+  const effort_level = selectedContractValue("ntEffort") || "off";
+  const candidate_count = contractCount("ntUltra", "ntUltraCustom", 64);
+  const framework = selectedContractValue("ntFramework") || "none";
+  const max_loops = contractCount("ntLoops", "ntLoopsCustom", 100);
+  const task_type = selectedContractValue("ntTaskType") || "build";
   if (!project || !goal) { toast("Choose a project and enter a goal", true); return; }
   try {
-    const result = await postJSON("/api/task/new", { project_path: project.path, goal, mode, isolation });
+    const result = await postJSON("/api/task/new", {
+      project_path: project.path, goal, mode, isolation, effort_level,
+      credit_ceiling: effortCeilings[effort_level], candidate_count,
+      machine_concurrency: window.COCKPIT.machineConcurrency, framework, max_loops, task_type,
+    });
     document.getElementById("newTaskDlg").close();
     document.getElementById("ntGoal").value = "";
     await refresh();

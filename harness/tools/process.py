@@ -37,7 +37,18 @@ async def start_process(hc: HarnessContext, command: str, cwd: str | None = None
     # Background processes get the same restricted env as run_command, and are
     # owned by this session/task so another conversation can't touch them.
     env = executor.build_env() if executor.name == "local" else None
-    mp = await mgr.start(command, argv, str(work), owner=hc.key, env=env)
+    group = ""
+    group_limit = 0
+    if hc.store is not None and hc.task_id:
+        task = hc.store.get_task(hc.task_id)
+        contract = hc.store.get_run_contract(hc.task_id) if task and task.contract_id else None
+        if contract is not None:
+            group = task.contract_id
+            group_limit = contract.machine_concurrency
+    mp = await mgr.start(
+        command, argv, str(work), owner=hc.key, env=env,
+        group=group, group_limit=group_limit,
+    )
     hc.log("start_process", id=mp.id, command=command)
 
     await asyncio.sleep(max(0.0, min(wait, 10.0)))

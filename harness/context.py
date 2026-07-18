@@ -118,6 +118,7 @@ class HarnessServer:
             make_scrub_hook,
             make_telemetry_hook,
         )
+        from .observations import make_observation_post_hook, make_observation_pre_hook
         from .processes import ProcessManager
         from .tasks.store import TaskStore
 
@@ -143,6 +144,8 @@ class HarnessServer:
         if config.user_hooks:
             from .userhooks import make_user_post_hook, make_user_pre_hook
             self.hooks.on_pre(make_user_pre_hook(config))  # may veto (Phase 7)
+        self.hooks.on_pre(make_observation_pre_hook(self.tasks))
+        self.hooks.on_post(make_observation_post_hook(self.tasks))
         # Telemetry BEFORE scrub so it sees the raw (unredacted) result markers.
         self.hooks.on_post(make_telemetry_hook(self.tasks))
         self.hooks.on_post(make_rules_hook())          # path-scoped rules (6.1)

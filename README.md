@@ -304,30 +304,32 @@ produces roleplay (see Test 2). Ask for the validated pattern instead:
 > wait idle — while machines run, keep thinking on the next task; read each
 > result when ready and reconcile at the end.
 
-Or install the bundled skill ([docs/skills/harness-ultra.md](docs/skills/harness-ultra.md)
-→ copy the folder to `~/.agents/skills/`) and the whole contract shrinks to:
+### The four independent Run Contract controls
 
-```
-Load the skill "harness-ultra". ULTRA: <goal>
-```
+The Workbench locks four separate choices before a run starts:
 
-### Effort levels & "our ultracode"
+1. **EFFORT** (`Off`, `Low`, `Medium`, `High`, `X-High`, `Max`) sets an
+   auditable credit ceiling. Credits measure evidence-backed procedure; they do
+   not increase ChatGPT's hidden reasoning compute and they never mean "done".
+2. **ULTRA WORKFLOW** (`Off`, `2`, `3`, `5`, `8`) sets the maximum number of
+   isolated candidate implementations. Candidate thinking is sequential; only
+   machine verification runs in parallel.
+3. **AOCS FRAMEWORK** (`None`, `AOCS Omega`) records whether the separate
+   framework was deliberately selected. ULTRA never enables it implicitly.
+4. **LOOPS** (`Off`, `2`, `5`, `10`) sets a bounded number of evidence-checked
+   refinement passes, with no-repeat and no-gain stopping brakes.
 
-Provider effort switches (Codex `xhigh`, DeepSeek high/max, GLM …) are trained
-prompt-conditioning: the same weights, taught to reason longer when special
-control tokens appear. A local harness cannot inject those tokens into ChatGPT
-— so it ships the two levers that really exist here:
+These values form one locked Run Contract and are inherited by forks. The only
+allowed changes are one-shot operator-approved extensions recorded in the audit.
+Read
+the matching, deliberately separate skills when a row is enabled:
 
-1. **ChatGPT's own model/effort picker** — the genuine trained control, set by
-   the human per message; raise it for hard tasks.
-2. **Prompt-conditioning tiers** via the `harness-ultra` skill:
-   `QUICK / STANDARD / DEEP / ULTRA` map to AOCS fractal depths 0–3. ULTRA is
-   the local ultracode analog: best-of-N candidate implementations in separate
-   worktrees → parallel machine verification of all candidates → TMR
-   (solve the core twice, diff the behaviors) → blind evidence-based judging →
-   synthesis. It imitates ultracode's *discipline* (many attempts, adversarial
-   verification, evidence-first judging) while being honest that the attempts
-   run sequentially — true parallel model workers are impossible here by design.
+- [harness-effort](docs/skills/harness-effort.md) for credit cycles and receipts.
+- [harness-ultra](docs/skills/harness-ultra.md) for candidate orchestration only.
+- [harness-loops](docs/skills/harness-loops.md) for bounded refinement passes.
+
+Also raise **ChatGPT's own model/effort picker** for hard tasks. That is the real
+model-compute control; the harness controls procedure, limits, evidence, and audit.
 
 ### Also proven/added in the first real-user session (2026-07-17/18)
 

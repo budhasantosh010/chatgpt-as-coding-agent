@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "fixture": "fixture_seed",
+  "cases": [
+    {
+      "id": "B01", "kind": "targeted_bug",
+      "goal": "Fix percentage discounts without changing the public function signature.",
+      "comparison_variable": "effort_level",
+      "baseline_contract": {"effort_level": "off", "candidate_count": 0, "framework": "none", "max_loops": 0},
+      "variant_contract": {"effort_level": "low", "candidate_count": 0, "framework": "none", "max_loops": 0}
+    },
+    {
+      "id": "B02", "kind": "multi_file_feature",
+      "goal": "Add idempotent order cancellation with a durable audit entry across the model and a file-backed OrderStore(path) that survives reopening.",
+      "comparison_variable": "candidate_count",
+      "baseline_contract": {"effort_level": "off", "candidate_count": 0, "framework": "none", "max_loops": 0},
+      "variant_contract": {"effort_level": "off", "candidate_count": 2, "framework": "none", "max_loops": 0}
+    },
+    {
+      "id": "B03", "kind": "misleading_regression",
+      "goal": "Fix currency report totals; the visible sum is a symptom, so trace the parser.",
+      "comparison_variable": "max_loops",
+      "baseline_contract": {"effort_level": "off", "candidate_count": 0, "framework": "none", "max_loops": 0},
+      "variant_contract": {"effort_level": "off", "candidate_count": 0, "framework": "none", "max_loops": 2}
+    },
+    {
+      "id": "B04", "kind": "refactor",
+      "goal": "Centralize email normalization without changing create/find behavior.",
+      "comparison_variable": "effort_level",
+      "baseline_contract": {"effort_level": "low", "candidate_count": 0, "framework": "none", "max_loops": 0},
+      "variant_contract": {"effort_level": "medium", "candidate_count": 0, "framework": "none", "max_loops": 0}
+    },
+    {
+      "id": "B05", "kind": "security_fix",
+      "goal": "Prevent attachment path traversal while preserving valid nested attachments.",
+      "comparison_variable": "framework",
+      "baseline_contract": {"effort_level": "off", "candidate_count": 0, "framework": "none", "max_loops": 0},
+      "variant_contract": {"effort_level": "off", "candidate_count": 0, "framework": "aocs_omega", "max_loops": 0}
+    }
+  ]
+}

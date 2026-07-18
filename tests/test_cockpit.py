@@ -76,6 +76,110 @@ def test_index_exposes_accessible_three_pane_workbench(client):
     assert 'type="module" src="/static/app.mjs' in r.text
 
 
+def test_new_session_dialog_exposes_all_four_locked_controls(client):
+    c, cp, tmp = client
+    html = c.get("/").text
+
+    for control in ("ntEffort", "ntUltra", "ntFramework", "ntLoops", "ntTaskType"):
+        assert f'id="{control}"' in html
+    assert 'id="ntEstimate"' in html
+    assert 'id="ntUltraCustom"' in html
+    assert 'id="ntLoopsCustom"' in html
+    assert "Confirm &amp; lock" in html
+    ultra = html.split('id="ntUltra"', 1)[1].split("</fieldset>", 1)[0]
+    assert ">Auto<" not in ultra
+
+
+def test_contract_estimate_reads_server_profiles_and_concurrency(client):
+    c, cp, tmp = client
+    cp.config.effort_profiles = {
+        "low": 3, "medium": 9, "high": 18, "xhigh": 36, "max": 60,
+    }
+    cp.config.model_concurrency = 3
+
+    html = c.get("/").text
+    app = c.get("/static/app.mjs").text
+
+    assert '"medium": 9' in html
+    assert '"modelConcurrency": 3' in html
+    assert "window.COCKPIT.effortProfiles" in app
+    assert "window.COCKPIT.modelConcurrency" in app
+
+
+def test_mode_update_retries_a_real_cross_process_conflict(client, monkeypatch):
+    c, cp, tmp = client
+    project = tmp / "race-project"
+    project.mkdir()
+    pid = cp.store.register_project(str(project), "Race")
+    task = cp.store.create_task(pid, str(project), goal="race")
+
+    from harness.tasks.store import TaskStore
+
+    other = TaskStore(cp.store.path)
+    original_get = cp.store.get_task
+    injected = False
+
+    def get_with_one_race(task_id):
+        nonlocal injected
+        current = original_get(task_id)
+        if task_id == task.id and not injected:
+            injected = True
+            assert other.set_task_chat_url(task.id, "https://chatgpt.com/c/parallel")
+        return current
+
+    monkeypatch.setattr(cp.store, "get_task", get_with_one_race)
+    try:
+        response = c.post(
+            "/api/task/mode",
+            json={"task_id": task.id, "mode": "plan"},
+            headers=_hdr(cp),
+        )
+    finally:
+        other.close()
+
+    assert response.status_code == 200
+    saved = original_get(task.id)
+    assert saved.permission_mode == "plan"
+    assert saved.chat_url == "https://chatgpt.com/c/parallel"
+
+
+def test_operator_can_satisfy_only_operator_kind_criterion(client):
+    c, cp, tmp = client
+    project = tmp / "operator-criterion"
+    project.mkdir()
+    pid = cp.store.register_project(str(project), "Operator criterion")
+    task = cp.store.create_task(
+        pid, str(project), goal="visual check", acceptance_criteria=["UI looks right"]
+    )
+
+    from harness.tasks.contracts import RunContract
+
+    linked = cp.store.confirm_run_contract(
+        task.id,
+        RunContract.confirmed(
+            task_type="review", effort_level="off", credit_ceiling=0,
+            candidate_count=0, machine_concurrency=1, model_concurrency=1,
+            framework="none", max_loops=0,
+        ),
+    )
+    current = cp.store.get_task(linked.id)
+    current.criteria_v2[0]["verification_kind"] = "operator"
+    cp.store.save_task(current)
+
+    response = c.post(
+        "/api/task/criterion/operator-satisfy",
+        json={"task_id": linked.id, "criterion_id": "AC-1"},
+        headers=_hdr(cp),
+    )
+
+    assert response.status_code == 200
+    criterion = cp.store.get_task(linked.id).criteria_v2[0]
+    assert criterion["status"] == "satisfied"
+    assert criterion["evidence_refs"] == [
+        {"kind": "operator", "confirmed_by": "operator"}
+    ]
+
+
 def test_layout_module_defines_bounded_persisted_panes(client):
     c, cp, tmp = client
 
@@ -158,6 +262,110 @@ def test_create_project_then_new_session_then_setmode(client):
     # change its mode
     r = c.post("/api/task/mode", json={"task_id": tid, "mode": "plan"}, headers=_hdr(cp))
     assert r.status_code == 200 and r.json()["task"]["mode"] == "plan"
+
+
+def test_new_session_confirms_run_contract_and_root_scope(client):
+    c, cp, tmp = client
+    project = tmp / "contract-project"
+    c.post("/api/project/create", json={"path": str(project)}, headers=_hdr(cp))
+
+    response = c.post("/api/task/new", json={
+        "project_path": str(project), "goal": "contracted", "mode": "auto_workspace",
+        "effort_level": "high", "credit_ceiling": 16, "candidate_count": 3,
+        "machine_concurrency": 4, "framework": "aocs_omega", "max_loops": 5,
+        "task_type": "build",
+    }, headers=_hdr(cp))
+
+    assert response.status_code == 200
+    assert "Run Contract:" in response.json()["message"]
+    task = cp.store.get_task(response.json()["task_id"])
+    contract = cp.store.get_run_contract(task.id)
+    assert contract.effort_level == "high" and contract.candidate_count == 3
+    assert contract.framework == "aocs_omega" and contract.max_loops == 5
+    assert task.credit_scope_id
+
+
+def test_contract_panels_and_operator_actions_are_wired(client):
+    c, cp, tmp = client
+    render = c.get("/static/render.mjs").text
+    app = c.get("/static/app.mjs").text
+
+    for panel in ("contractPanel", "gatesPanel", "auditPanel"):
+        assert f"function {panel}" in render
+    assert 'data-action="confirm-criterion"' in render
+    assert 'data-action="confirm-loop"' in render
+    assert "proposed_outcome" in render
+    assert "target_weakness" in render
+    assert "delta_summary" in render
+    assert "attach-contract" in render and "Validated evidence" in render
+    assert "attachContract" in app
+    assert "/api/task/criterion/operator-satisfy" in app
+    assert "/api/task/loop/operator-confirm" in app
+
+
+def test_effort_status_endpoint_returns_contract_gates_receipts_and_loops(client):
+    c, cp, tmp = client
+    project = tmp / "status-project"
+    project.mkdir()
+    pid = cp.store.register_project(str(project), "Status")
+    task = cp.store.create_task(pid, str(project), goal="status")
+    from harness.tasks.contracts import RunContract
+    cp.store.confirm_run_contract(task.id, RunContract.confirmed(
+        task_type="review", effort_level="off", credit_ceiling=0,
+        candidate_count=0, machine_concurrency=1, model_concurrency=1,
+        framework="none", max_loops=2,
+    ))
+
+    response = c.get(f"/api/task/effort?task_id={task.id}", headers={"Origin": COCKPIT_ORIGIN})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["contract"]["max_loops"] == 2
+    assert body["receipts"] == [] and body["criteria"] == [] and body["loops"] == []
+
+
+def test_chat_created_task_can_attach_contract_once(client):
+    c, cp, tmp = client
+    project = tmp / "attach-contract"
+    project.mkdir()
+    pid = cp.store.register_project(str(project), "Attach")
+    task = cp.store.create_task(pid, str(project), goal="legacy")
+    payload = {"task_id": task.id, "task_type": "review", "effort_level": "low",
+               "candidate_count": 0, "machine_concurrency": 2,
+               "framework": "none", "max_loops": 0}
+
+    first = c.post("/api/task/contract", json=payload, headers=_hdr(cp))
+    second = c.post("/api/task/contract", json=payload, headers=_hdr(cp))
+
+    assert first.status_code == 200
+    assert second.status_code == 409
+
+
+def test_operator_can_see_and_repair_tampered_contract(client):
+    c, cp, tmp = client
+    project = tmp / "repair-contract"
+    project.mkdir()
+    pid = cp.store.register_project(str(project), "Repair")
+    task = cp.store.create_task(pid, str(project), goal="repair")
+    payload = {"task_id": task.id, "task_type": "review", "effort_level": "low",
+               "candidate_count": 0, "machine_concurrency": 2,
+               "framework": "none", "max_loops": 0}
+    assert c.post("/api/task/contract", json=payload, headers=_hdr(cp)).status_code == 200
+    linked = cp.store.get_task(task.id)
+    cp.store._db.execute(
+        "UPDATE run_contracts SET contract_hash='tampered' WHERE contract_id=?",
+        (linked.contract_id,),
+    )
+    cp.store._db.commit()
+
+    state = c.get("/api/state", headers={"Origin": COCKPIT_ORIGIN}).json()
+    shown = next(item for item in state["tasks"] if item["id"] == task.id)
+    assert "CONTRACT_TAMPERED" in shown["contract_error"]
+    repaired = c.post("/api/task/contract", json=payload, headers=_hdr(cp))
+
+    assert repaired.status_code == 200
+    assert cp.store.get_run_contract(task.id).contract_hash != "tampered"
+    assert any(event["type"] == "run_contract_repaired" for event in cp.store.events(task.id))
 
 
 def test_add_existing_nonempty_folder_registers_project(client):

@@ -59,6 +59,7 @@ class Task(BaseModel):
     title: str = ""
     goal: str = ""
     acceptance_criteria: list[str] = Field(default_factory=list)
+    criteria_v2: list = Field(default_factory=list)
     permission_mode: str = "auto_workspace"
     # True only when the operator raised this task's mode via the local CLI
     # (`harness tasks set-mode`). Lets the task run above config.max_mode.
@@ -80,6 +81,14 @@ class Task(BaseModel):
     chat_url: str = ""
     # Durable navigation preference owned by the task domain, not browser state.
     pinned: bool = False
+    # Explicit family-wide link to the immutable Run Contract. Empty keeps the
+    # pre-four-controls behavior.
+    contract_id: str = ""
+    # Shared budget pot. Empty when EFFORT is Off or no contract exists.
+    credit_scope_id: str = ""
+    # Authoritative optimistic-concurrency version is stored in the promoted DB
+    # column and copied here whenever a task is loaded.
+    revision: int = 0
     result: str | None = None
     created: str = ""
     updated: str = ""

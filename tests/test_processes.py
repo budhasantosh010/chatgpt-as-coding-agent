@@ -76,3 +76,29 @@ def test_list_and_get():
 
     got, listed = run(scenario())
     assert got is not None and len(listed) == 1
+
+
+def test_random_ids_and_atomic_group_limit():
+    async def scenario():
+        mgr = ProcessManager()
+        first = await mgr.start(
+            "wait", [sys.executable, "-c", "import time; time.sleep(30)"],
+            cwd=".", group="contract", group_limit=1,
+        )
+        try:
+            try:
+                await mgr.start(
+                    "wait2", [sys.executable, "-c", "import time; time.sleep(30)"],
+                    cwd=".", group="contract", group_limit=1,
+                )
+            except ValueError as exc:
+                error = str(exc)
+            else:
+                error = ""
+        finally:
+            await mgr.stop(first)
+        return first.id, error
+
+    proc_id, error = run(scenario())
+    assert proc_id.startswith("px-") and proc_id != "px-1"
+    assert "MACHINE_CONCURRENCY" in error

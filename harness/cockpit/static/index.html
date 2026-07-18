@@ -8,7 +8,7 @@
 document.documentElement.dataset.theme = localStorage.getItem("cockpit-theme") || "light";
 </script>
 <!--BOOT-->
-<link rel="stylesheet" href="/static/cockpit.css?v=15">
+<link rel="stylesheet" href="/static/cockpit.css?v=17">
 </head>
 <body>
 <header class="titlebar">
@@ -81,13 +81,69 @@ document.documentElement.dataset.theme = localStorage.getItem("cockpit-theme") |
         <option value="worktree">Isolated copy (for parallel experiments)</option>
       </select>
     </label>
+    <fieldset class="contract-row" id="ntEffort">
+      <legend>EFFORT <small>procedure credits</small></legend>
+      <div class="segmented">
+        <label><input type="radio" name="ntEffort" value="off" checked><span>Off</span></label>
+        <label><input type="radio" name="ntEffort" value="low"><span>Low · 2</span></label>
+        <label><input type="radio" name="ntEffort" value="medium"><span>Med · 8</span></label>
+        <label><input type="radio" name="ntEffort" value="high"><span>High · 16</span></label>
+        <label><input type="radio" name="ntEffort" value="xhigh"><span>XHigh · 32</span></label>
+        <label><input type="radio" name="ntEffort" value="max"><span>Max · 50</span></label>
+      </div>
+      <p>Audit budget, not model depth. Set ChatGPT's picker separately.</p>
+    </fieldset>
+    <fieldset class="contract-row" id="ntUltra">
+      <legend>ULTRA WORKFLOW <small>sequential candidates</small></legend>
+      <div class="segmented">
+        <label><input type="radio" name="ntUltra" value="0" checked><span>Off</span></label>
+        <label><input type="radio" name="ntUltra" value="2"><span>2</span></label>
+        <label><input type="radio" name="ntUltra" value="3"><span>3</span></label>
+        <label><input type="radio" name="ntUltra" value="5"><span>5</span></label>
+        <label><input type="radio" name="ntUltra" value="8"><span>8</span></label>
+        <label><input type="radio" name="ntUltra" value="custom"><span>Custom</span></label>
+      </div>
+      <details class="contract-advanced"><summary>Advanced candidate limit</summary>
+        <label>Maximum candidates <input id="ntUltraCustom" type="number" min="1" max="64" value="10"></label>
+      </details>
+    </fieldset>
+    <fieldset class="contract-row" id="ntFramework">
+      <legend>FRAMEWORK</legend>
+      <div class="segmented">
+        <label><input type="radio" name="ntFramework" value="none" checked><span>None</span></label>
+        <label><input type="radio" name="ntFramework" value="aocs_omega"><span>AOCS Omega</span></label>
+      </div>
+    </fieldset>
+    <fieldset class="contract-row" id="ntLoops">
+      <legend>LOOPS <small>bounded refinement</small></legend>
+      <div class="segmented">
+        <label><input type="radio" name="ntLoops" value="0" checked><span>Off</span></label>
+        <label><input type="radio" name="ntLoops" value="2"><span>2</span></label>
+        <label><input type="radio" name="ntLoops" value="5"><span>5</span></label>
+        <label><input type="radio" name="ntLoops" value="10"><span>10</span></label>
+        <label><input type="radio" name="ntLoops" value="custom"><span>Custom</span></label>
+      </div>
+      <details class="contract-advanced"><summary>Advanced loop limit</summary>
+        <label>Maximum passes <input id="ntLoopsCustom" type="number" min="1" max="100" value="12"></label>
+      </details>
+    </fieldset>
+    <fieldset class="contract-row" id="ntTaskType">
+      <legend>TASK TYPE</legend>
+      <div class="segmented">
+        <label><input type="radio" name="ntTaskType" value="build" checked><span>Build</span></label>
+        <label><input type="radio" name="ntTaskType" value="review"><span>Review</span></label>
+        <label><input type="radio" name="ntTaskType" value="plan"><span>Plan</span></label>
+        <label><input type="radio" name="ntTaskType" value="research"><span>Research</span></label>
+      </div>
+    </fieldset>
+    <div class="contract-estimate" id="ntEstimate">Estimate: no procedure credits · one model stream</div>
     <div class="dialog-actions">
       <button value="cancel" class="quiet-button">Cancel</button>
-      <button id="ntCreate" value="ok" class="primary-button">Create session</button>
+      <button id="ntCreate" value="ok" class="primary-button">Confirm &amp; lock</button>
     </div>
   </form>
 </dialog>
 
-<script type="module" src="/static/app.mjs?v=15"></script>
+<script type="module" src="/static/app.mjs?v=17"></script>
 </body>
 </html>

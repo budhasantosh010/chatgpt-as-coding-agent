@@ -43,6 +43,17 @@ _TOOL_CAPS: dict[str, Capability] = {
 def capability_for(tool: str) -> Capability:
     return _TOOL_CAPS.get(tool, Capability.READ)
 
+
+def _task_mutation_denial(server: HarnessServer, task_id: str) -> str | None:
+    """Deny contracted state changes for a task whose ceiling is read-only."""
+    task = server.tasks.get_task(task_id)
+    if task is not None and task.permission_mode == "read_only":
+        return (
+            "Error: [PERMISSION_DENIED] contracted state changes require "
+            "plan mode or above"
+        )
+    return None
+
 _EXPECTED_ERRORS = (
     SecurityError,
     ValueError,
@@ -692,11 +703,23 @@ def build_mcp(config: Config, server: HarnessServer) -> FastMCP:
         except _EXPECTED_ERRORS as exc:
             return _scrub_server(server, f"Error: {exc}")
 
+    def _task_mutation_call(task_id: str, fn, *args) -> str:
+        denied = _task_mutation_denial(server, task_id)
+        if denied is not None:
+            return _scrub_server(server, denied)
+        return _task_call(fn, task_id, *args)
+
     async def _task_call_async(fn, *args) -> str:
         try:
             return _scrub_server(server, await fn(server, *args))
         except _EXPECTED_ERRORS as exc:
             return _scrub_server(server, f"Error: {exc}")
+
+    async def _task_mutation_call_async(task_id: str, fn, *args) -> str:
+        denied = _task_mutation_denial(server, task_id)
+        if denied is not None:
+            return _scrub_server(server, denied)
+        return await _task_call_async(fn, task_id, *args)
 
     @mcp.tool()
     async def start_task(project_path: str, goal: str, permission_mode: str = "auto_workspace",
@@ -744,8 +767,107 @@ def build_mcp(config: Config, server: HarnessServer) -> FastMCP:
 
     @mcp.tool()
     async def set_acceptance_criteria(task_id: str, criteria: list, ctx: Context = None) -> str:
-        """Set the checklist that defines 'done' for this task (list of strings)."""
-        return _task_call(tasktools.set_acceptance_criteria, task_id, criteria)
+        """Set done-gates. Items may be strings or objects with text,
+        verification_kind (machine/source/operator/mixed), and required."""
+        return _task_mutation_call(task_id, tasktools.set_acceptance_criteria, criteria)
+
+    @mcp.tool()
+    async def satisfy_criterion(
+        task_id: str, criterion_id: str, evidence: list, ctx: Context = None
+    ) -> str:
+        """Satisfy one contracted acceptance criterion with server-valid evidence.
+        Operator-kind criteria can only be confirmed from the local Workbench."""
+        return _task_mutation_call(
+            task_id, tasktools.satisfy_criterion, criterion_id, evidence
+        )
+
+    @mcp.tool()
+    async def record_framework_routing(
+        task_id: str, activated: list, skipped: list, reason: str,
+        ctx: Context = None,
+    ) -> str:
+        """Record which declared AOCS parts were used or skipped and why."""
+        return _task_mutation_call(
+            task_id, tasktools.record_framework_routing, activated, skipped, reason
+        )
+
+    @mcp.tool()
+    async def begin_cycle(task_id: str, question: str, purpose: str = "",
+                          verification_plan: str = "", ctx: Context = None) -> str:
+        """Open one auditable EFFORT cycle under the task's shared credit scope."""
+        return _task_mutation_call(
+            task_id, tasktools.begin_cycle, question, purpose, verification_plan
+        )
+
+    @mcp.tool()
+    async def complete_cycle(task_id: str, cycle_id: str, conclusion: str,
+                             decision: str, evidence: list, ctx: Context = None) -> str:
+        """Validate a cycle receipt and atomically spend one credit."""
+        return _task_mutation_call(
+            task_id, tasktools.complete_cycle, cycle_id, conclusion, decision, evidence
+        )
+
+    @mcp.tool()
+    async def abandon_cycle(task_id: str, cycle_id: str, reason: str,
+                            ctx: Context = None) -> str:
+        """Close an EFFORT cycle without spending a credit."""
+        return _task_mutation_call(task_id, tasktools.abandon_cycle, cycle_id, reason)
+
+    @mcp.tool()
+    async def get_effort_status(task_id: str, ctx: Context = None) -> str:
+        """Show the compact EFFORT ledger, criteria, and contract status."""
+        return _task_call(tasktools.get_effort_status, task_id)
+
+    @mcp.tool()
+    async def request_extension(task_id: str, kind: str, amount: int, reason: str,
+                                scope_id: str = "", ctx: Context = None) -> str:
+        """Request an operator-approved contract extension; approval is one-shot."""
+        result = _task_mutation_call(
+            task_id, tasktools.request_extension, kind, amount, reason, scope_id
+        )
+        aid = _pending_approval_id(result)
+        wait = int(server.config.approval_wait_seconds or 0)
+        if aid is None or wait <= 0:
+            return result
+        import asyncio
+        import time as _time
+
+        deadline = _time.monotonic() + wait
+        while _time.monotonic() < deadline:
+            approval = server.tasks.get_approval(aid)
+            status = (approval or {}).get("status")
+            if status == "approved":
+                return _task_mutation_call(
+                    task_id, tasktools.request_extension, kind, amount, reason, scope_id
+                )
+            if status == "denied":
+                return "Error: [APPROVAL_DENIED] the operator denied this extension"
+            if status in {"used", None}:
+                return result
+            await asyncio.sleep(max(0.01, min(0.5, deadline - _time.monotonic())))
+        return result
+
+    @mcp.tool()
+    async def begin_refinement_pass(
+        task_id: str, target_weakness: str, directive: str,
+        verification_plan: str, verification_kind: str = "", ctx: Context = None,
+    ) -> str:
+        """Open one bounded refinement pass with a declared evidence kind."""
+        return await _task_mutation_call_async(
+            task_id, tasktools.begin_refinement_pass, target_weakness, directive,
+            verification_plan, verification_kind,
+        )
+
+    @mcp.tool()
+    async def complete_refinement_pass(
+        task_id: str, pass_id: str, outcome: str, evidence: list,
+        delta_summary: str = "", ctx: Context = None,
+    ) -> str:
+        """Evidence-check and close a pass; operator-kind passes wait locally."""
+        return await _task_mutation_call_async(
+            task_id, tasktools.complete_refinement_pass, pass_id, outcome,
+            evidence, delta_summary,
+        )
 
     @mcp.tool()
     async def advance_task(task_id: str, to_state: str, ctx: Context = None) -> str:
@@ -778,11 +900,16 @@ def build_mcp(config: Config, server: HarnessServer) -> FastMCP:
         return await _task_call_async(tasktools.create_project, path, name)
 
     @mcp.tool()
-    async def fork_task(task_id: str, goal: str = "", title: str = "", ctx: Context = None) -> str:
+    async def fork_task(task_id: str, goal: str = "", title: str = "",
+                        candidate: bool = False, ctx: Context = None) -> str:
         """Fork a task: a new task on the same project with its OWN worktree from
         the same base, copying goal/criteria/plan — try two approaches side by
         side. The original task is untouched."""
-        return await _task_call_async(tasktools.fork_task, task_id, goal, title)
+        if candidate:
+            return await _task_mutation_call_async(
+                task_id, tasktools.fork_task, goal, title, candidate
+            )
+        return await _task_call_async(tasktools.fork_task, task_id, goal, title, candidate)
 
     # ---- federation (consume other MCP servers) ----------------------------
     # Federated tools go through the same permission gate as everything else.

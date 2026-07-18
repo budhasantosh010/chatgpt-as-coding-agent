@@ -109,7 +109,7 @@ def build_cockpit_app(cockpit: Cockpit) -> Starlette:
 
         eff = effective_mode(t.permission_mode, operator_elevated=t.operator_elevated,
                               ceiling=cfg.max_mode, sandbox=cfg.sandbox)
-        return {
+        data = {
             "id": t.id, "project_id": t.project_id, "title": t.title, "goal": t.goal,
             "status": t.status.value, "mode": t.permission_mode, "effective_mode": eff,
             "operator_elevated": t.operator_elevated,
@@ -117,18 +117,40 @@ def build_cockpit_app(cockpit: Cockpit) -> Starlette:
             "changed_files": t.changed_files, "checkpoints": t.checkpoints,
             "commands": t.commands, "test_results": t.test_results,
             "acceptance_criteria": t.acceptance_criteria,
+            "criteria_v2": t.criteria_v2,
             "pinned_files": t.pinned_files, "chat_url": t.chat_url,
             "pinned": t.pinned,
+            "contract_id": t.contract_id,
             "parent_id": t.parent_id, "created": t.created, "updated": t.updated,
         }
+        data.update({"contract": None, "effort": None, "receipts": [], "loops": []})
+        try:
+            contract = cockpit.store.get_run_contract(t.id)
+            data["contract"] = contract.model_dump(mode="json") if contract else None
+            data["effort"] = (
+                cockpit.store.effort_status(t.credit_scope_id) if t.credit_scope_id else None
+            )
+            data["receipts"] = (
+                cockpit.store.spent_receipts(t.credit_scope_id) if t.credit_scope_id else []
+            )
+            data["loops"] = cockpit.store.loop_passes(t.id) if contract else []
+        except ValueError as exc:
+            data["contract_error"] = str(exc)
+        return data
 
     # ---- static + bootstrap ------------------------------------------------
 
     async def index(request):
         html = (STATIC / "index.html").read_text(encoding="utf-8")
         # Inject the CSRF token + cockpit port so same-origin JS can use them.
-        boot = (f'<script>window.COCKPIT={{token:"{cockpit.csrf_token}",'
-                f'port:{cfg.cockpit_port}}};</script>')
+        boot_data = {
+            "token": cockpit.csrf_token, "port": cfg.cockpit_port,
+            "effortProfiles": cfg.effort_profiles,
+            "modelConcurrency": cfg.model_concurrency,
+            "machineConcurrency": 2,
+        }
+        encoded_boot = json.dumps(boot_data, ensure_ascii=False).replace("<", "\\u003c")
+        boot = f"<script>window.COCKPIT={encoded_boot};</script>"
         html = html.replace("<!--BOOT-->", boot)
         html = html.replace("<script", f'<script nonce="{cockpit.csp_nonce}"')
         csp = (
@@ -216,6 +238,28 @@ def build_cockpit_app(cockpit: Cockpit) -> Starlette:
             diff = f"(diff unavailable: {exc})"
         return JSONResponse({"task_id": tid, "diff": diff})
 
+    async def api_effort_status(request):
+        if not cockpit.origin_ok(request):
+            return _err("forbidden", 403)
+        task_id = request.query_params.get("task_id", "")
+        task = cockpit.store.get_task(task_id)
+        if task is None:
+            return _err("unknown task", 404)
+        try:
+            contract = cockpit.store.get_run_contract(task_id)
+            if contract is None:
+                return _err("task has no Run Contract", 404)
+            from ..tasks import tools as tt
+            summary = tt.get_effort_status(cockpit.server, task_id)
+            receipts = cockpit.store.spent_receipts(task.credit_scope_id) if task.credit_scope_id else []
+        except ValueError as exc:
+            return _err(str(exc))
+        return JSONResponse({
+            "task_id": task_id, "contract": contract.model_dump(mode="json"),
+            "summary": summary, "receipts": receipts,
+            "criteria": task.criteria_v2, "loops": cockpit.store.loop_passes(task_id),
+        })
+
     async def sse(request):
         # Read-only live feed. Origin-checked; no token (EventSource can't set
         # custom headers). Replays from Last-Event-ID, then polls the bus.
@@ -271,12 +315,30 @@ def build_cockpit_app(cockpit: Cockpit) -> Starlette:
         if not goal:
             return _err("a goal is required")
         from ..tasks import tools as tt
+        contract = None
+        if "task_type" in body:
+            from ..tasks.contracts import RunContract
+            effort = body.get("effort_level", "off")
+            try:
+                ceiling = 0 if effort == "off" else cfg.effort_profiles[effort]
+                contract = RunContract.confirmed(
+                    task_type=body.get("task_type", "build"),
+                    effort_level=effort, credit_ceiling=ceiling,
+                    candidate_count=int(body.get("candidate_count", 0)),
+                    machine_concurrency=int(body.get("machine_concurrency", 2)),
+                    model_concurrency=cfg.model_concurrency,
+                    framework=body.get("framework", "none"),
+                    max_loops=int(body.get("max_loops", 0)),
+                )
+            except (KeyError, TypeError, ValueError) as exc:
+                return _err(f"invalid Run Contract: {exc}")
 
         try:
             # operator=True: the cockpit IS the operator, so a workspace (in-place)
             # choice here needs no extra approval gate.
             out = await tt.start_task(cockpit.server, project, goal, mode,
-                                      isolation=isolation, operator=True)
+                                      isolation=isolation, operator=True,
+                                      contract=contract)
         except Exception as exc:  # noqa: BLE001
             return _err(str(exc))
         if "APPROVAL REQUIRED" in out:
@@ -303,6 +365,44 @@ def build_cockpit_app(cockpit: Cockpit) -> Starlette:
             return _err(str(exc))
         return JSONResponse({"message": out})
 
+    async def api_set_contract(request):
+        if (g := guard(request)):
+            return g
+        body = await _json(request)
+        task_id = body.get("task_id", "")
+        task = cockpit.store.get_task(task_id)
+        if task is None:
+            return _err("unknown task", 404)
+        repairing = False
+        if task.contract_id:
+            try:
+                cockpit.store.get_run_contract(task_id)
+            except ValueError:
+                repairing = True
+            else:
+                return _err("Run Contract already confirmed", 409)
+        if task.status.value in {"completed", "failed", "cancelled"}:
+            return _err("terminal tasks cannot receive a Run Contract", 409)
+        from ..tasks.contracts import RunContract
+        effort = body.get("effort_level", "off")
+        try:
+            contract = RunContract.confirmed(
+                task_type=body.get("task_type", "build"), effort_level=effort,
+                credit_ceiling=0 if effort == "off" else cfg.effort_profiles[effort],
+                candidate_count=int(body.get("candidate_count", 0)),
+                machine_concurrency=int(body.get("machine_concurrency", 2)),
+                model_concurrency=cfg.model_concurrency,
+                framework=body.get("framework", "none"),
+                max_loops=int(body.get("max_loops", 0)),
+            )
+            linked = (
+                cockpit.store.repair_run_contract(task_id, contract)
+                if repairing else cockpit.store.confirm_run_contract(task_id, contract)
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            return _err(str(exc))
+        return JSONResponse({"ok": True, "task": task_dict(linked)})
+
     async def api_set_mode(request):
         if (g := guard(request)):
             return g
@@ -312,14 +412,13 @@ def build_cockpit_app(cockpit: Cockpit) -> Starlette:
 
         if mode not in VALID_MODES:
             return _err("invalid mode")
-        t = cockpit.store.get_task(tid)
+        t = cockpit.store.set_task_mode(
+            tid, mode, mode_rank(mode) > mode_rank(cfg.max_mode)
+        )
         if t is None:
             return _err("unknown task", 404)
-        t.permission_mode = mode
         # Cockpit is operator-only, so choosing full/bypass here is legitimate
         # elevation (checklist 2.3) — mark it so the ceiling lets it through.
-        t.operator_elevated = mode_rank(mode) > mode_rank(cfg.max_mode)
-        cockpit.store.save_task(t)
         cockpit.store.add_event(tid, "cockpit_set_mode", mode=mode)
         return JSONResponse({"ok": True, "task": task_dict(t)})
 
@@ -344,6 +443,34 @@ def build_cockpit_app(cockpit: Cockpit) -> Starlette:
         if not cockpit.store.set_task_pinned(body.get("task_id", ""), pinned):
             return _err("unknown task", 404)
         return JSONResponse({"ok": True})
+
+    async def api_satisfy_criterion_operator(request):
+        if (g := guard(request)):
+            return g
+        body = await _json(request)
+        from ..tasks import tools as tt
+
+        try:
+            message = tt.operator_satisfy_criterion(
+                cockpit.server,
+                body.get("task_id", ""),
+                body.get("criterion_id", ""),
+            )
+        except (ValueError, KeyError) as exc:
+            return _err(str(exc))
+        return JSONResponse({"ok": True, "message": message})
+
+    async def api_confirm_loop_operator(request):
+        if (g := guard(request)):
+            return g
+        body = await _json(request)
+        from ..tasks import tools as tt
+        message = tt.operator_confirm_refinement_pass(
+            cockpit.server, body.get("task_id", ""), body.get("pass_id", "")
+        )
+        if message.startswith("Error:"):
+            return _err(message)
+        return JSONResponse({"ok": True, "message": message})
 
     async def api_fork(request):
         if (g := guard(request)):
@@ -397,13 +524,13 @@ def build_cockpit_app(cockpit: Cockpit) -> Starlette:
         if (g := guard(request)):
             return g
         body = await _json(request)
-        t = cockpit.store.get_task(body.get("task_id"))
+        tid = body.get("task_id")
+        t = cockpit.store.get_task(tid)
         if t is None:
             return _err("unknown task", 404)
         p = body.get("path", "")
         if p and p not in t.pinned_files:
-            t.pinned_files.append(p)
-            cockpit.store.save_task(t)
+            t = cockpit.store.pin_task_file(tid, p)
         return JSONResponse({"ok": True, "task": task_dict(t)})
 
     async def api_upload(request):
@@ -432,8 +559,7 @@ def build_cockpit_app(cockpit: Cockpit) -> Starlette:
             return _err(str(exc))
         dest.write_bytes(data)
         if str(dest) not in t.pinned_files:
-            t.pinned_files.append(str(dest))
-            cockpit.store.save_task(t)
+            t = cockpit.store.pin_task_file(t.id, str(dest))
         return JSONResponse({"ok": True, "path": str(dest)})
 
     async def api_set_chat_url(request):
@@ -452,8 +578,7 @@ def build_cockpit_app(cockpit: Cockpit) -> Starlette:
             if (parsed.scheme != "https" or parsed.username or parsed.password
                     or not (host == "chatgpt.com" or host.endswith(".chatgpt.com"))):
                 return _err("chat_url must be an https://chatgpt.com URL")
-        t.chat_url = chat_url
-        cockpit.store.save_task(t)
+        cockpit.store.set_task_chat_url(t.id, chat_url)
         return JSONResponse({"ok": True})
 
     async def api_pick_folder(request):
@@ -506,13 +631,22 @@ def build_cockpit_app(cockpit: Cockpit) -> Starlette:
         Route("/api/files", api_files),
         Route("/api/task/events", api_task_events),
         Route("/api/diff", api_diff),
+        Route("/api/task/effort", api_effort_status),
         Route("/events", sse),
         Route("/_ingest", ingest, methods=["POST"]),
         Route("/api/task/new", api_new_task, methods=["POST"]),
+        Route("/api/task/contract", api_set_contract, methods=["POST"]),
         Route("/api/project/create", api_create_project, methods=["POST"]),
         Route("/api/task/mode", api_set_mode, methods=["POST"]),
         Route("/api/project/pinned", api_set_project_pinned, methods=["POST"]),
         Route("/api/task/pinned", api_set_task_pinned, methods=["POST"]),
+        Route(
+            "/api/task/criterion/operator-satisfy",
+            api_satisfy_criterion_operator,
+            methods=["POST"],
+        ),
+        Route("/api/task/loop/operator-confirm", api_confirm_loop_operator,
+              methods=["POST"]),
         Route("/api/task/fork", api_fork, methods=["POST"]),
         Route("/api/task/pin", api_pin_file, methods=["POST"]),
         Route("/api/task/upload", api_upload, methods=["POST"]),

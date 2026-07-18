@@ -97,7 +97,7 @@ def test_migrations_are_idempotent(tmp_path):
     TaskStore(db).close()
     s2 = TaskStore(db)  # reopening must not re-run migrations or error
     row = s2._db.execute("SELECT MAX(version) AS v FROM schema_version").fetchone()
-    assert row["v"] == 5
+    assert row["v"] == 7
     s2.close()
 
 
