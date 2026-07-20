@@ -151,6 +151,23 @@ def test_motion_layer_versioned_served_and_reduced_motion_safe(client):
     assert "playLaunch" in motion and "fail()" in motion
 
 
+def test_renderer_skips_dom_rebuild_when_markup_unchanged(client):
+    """Every store emit (5s poll, SSE events, loadTaskData) triggers render.
+    Unconditional innerHTML assignment razed the workspace DOM each time,
+    destroying keyboard focus and swallowing clicks that straddled a rebuild —
+    the contract pills felt dead during engine activity. The renderer must
+    memoize the last-set markup per container and skip identical strings."""
+    import re
+
+    c, cp, tmp = client
+    render = c.get("/static/render.mjs").text
+    assert "__renderedHTML" in render, "renderer lost its markup memoization"
+    assignments = re.findall(r"\.innerHTML\s*=", render)
+    assert len(assignments) == 1, (
+        f"expected exactly one guarded innerHTML assignment (inside setHTML), found {len(assignments)}"
+    )
+
+
 def test_contract_estimate_reads_server_profiles_and_concurrency(client):
     c, cp, tmp = client
     cp.config.effort_profiles = {

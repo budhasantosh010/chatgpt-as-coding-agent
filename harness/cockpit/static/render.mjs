@@ -1,7 +1,7 @@
 import {
   EFFORT_LEVELS, EFFORT_LABELS, ULTRA_OPTIONS, LOOPS_OPTIONS, TASK_TYPES,
   ULTRA_CUSTOM_MAX, LOOPS_CUSTOM_MAX,
-} from "./contract-options.mjs?v=22";
+} from "./contract-options.mjs?v=23";
 
 const INSPECTOR_TABS = [
   ["activity", "Activity"], ["changes", "Changes"], ["terminal", "Terminal"],
@@ -298,26 +298,43 @@ export function mountRenderer(store, actions) {
   const inspectorBody = document.getElementById("inspectorBody");
   let previousSelectedTask = null;
 
+  // Only touch the DOM when the markup actually changed. Every store emit
+  // (5s poll, SSE events, loadTaskData) used to raze these containers with
+  // innerHTML, which destroyed keyboard focus and swallowed any click whose
+  // press straddled the rebuild — contract pills felt dead during engine
+  // activity. Identical string => identical visuals, so skipping is always
+  // safe, and it preserves post-render state (focus, checked pills, thumbs,
+  // motion canvases) that a rebuild would have to reconstruct.
+  const setHTML = (element, html) => {
+    if (element.__renderedHTML === html) return false;
+    element.__renderedHTML = html;
+    element.innerHTML = html;
+    return true;
+  };
+
   const render = (state) => {
-    const previousWorkspaceScroll = previousSelectedTask === state.selectedTask
-      ? (workspaceEl.querySelector(".workspace-scroll")?.scrollTop || 0)
-      : 0;
-    tree.innerHTML = projectTree(state);
-    tabs.innerHTML = sessionTabs(state);
-    workspaceEl.innerHTML = workspace(state);
-    const workspaceScroll = workspaceEl.querySelector(".workspace-scroll");
-    if (workspaceScroll) workspaceScroll.scrollTop = previousWorkspaceScroll;
+    setHTML(tree, projectTree(state));
+    setHTML(tabs, sessionTabs(state));
+    const nextWorkspace = workspace(state);
+    if (workspaceEl.__renderedHTML !== nextWorkspace) {
+      const previousWorkspaceScroll = previousSelectedTask === state.selectedTask
+        ? (workspaceEl.querySelector(".workspace-scroll")?.scrollTop || 0)
+        : 0;
+      setHTML(workspaceEl, nextWorkspace);
+      const workspaceScroll = workspaceEl.querySelector(".workspace-scroll");
+      if (workspaceScroll) workspaceScroll.scrollTop = previousWorkspaceScroll;
+      actions.wireDropzone(workspaceEl.querySelector("#dropzone"));
+    }
     previousSelectedTask = state.selectedTask;
     const right = inspector(state);
-    inspectorTabs.innerHTML = right.tabs;
-    inspectorBody.innerHTML = right.body;
+    setHTML(inspectorTabs, right.tabs);
+    setHTML(inspectorBody, right.body);
     const engine = state.data.engine || "unknown";
     document.getElementById("engineStatus").className = `engine-status ${esc(engine)}`;
     document.getElementById("engineText").textContent = `Engine ${engine}`;
     const count = state.data.approvals.length;
     document.getElementById("needsCount").textContent = String(count);
     document.getElementById("needsPill").classList.toggle("is-hidden", count === 0);
-    actions.wireDropzone(workspaceEl.querySelector("#dropzone"));
   };
 
   document.getElementById("workbench").addEventListener("click", async (event) => {

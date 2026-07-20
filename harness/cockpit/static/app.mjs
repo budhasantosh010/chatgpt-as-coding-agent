@@ -1,14 +1,14 @@
-import { getJSON, postJSON } from "./api.mjs?v=22";
-import { initResizableLayout } from "./layout.mjs?v=22";
-import { mountRenderer } from "./render.mjs?v=22";
-import { createStore } from "./state.mjs?v=22";
+import { getJSON, postJSON } from "./api.mjs?v=23";
+import { initResizableLayout } from "./layout.mjs?v=23";
+import { mountRenderer } from "./render.mjs?v=23";
+import { createStore } from "./state.mjs?v=23";
 import {
   EFFORT_LABELS, ULTRA_CUSTOM_MAX, LOOPS_CUSTOM_MAX,
   boundedCount, contractEstimate,
-} from "./contract-options.mjs?v=22";
+} from "./contract-options.mjs?v=23";
 import {
   settleContractMotion, playContractMotion, refreshCustomCounts, playLaunch,
-} from "./contract-motion.mjs?v=22";
+} from "./contract-motion.mjs?v=23";
 
 const store = createStore();
 const loadingEvents = new Set();
