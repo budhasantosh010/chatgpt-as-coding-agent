@@ -1,7 +1,7 @@
 import {
   EFFORT_LEVELS, EFFORT_LABELS, ULTRA_OPTIONS, LOOPS_OPTIONS, TASK_TYPES,
   ULTRA_CUSTOM_MAX, LOOPS_CUSTOM_MAX,
-} from "./contract-options.mjs?v=21";
+} from "./contract-options.mjs?v=22";
 
 const INSPECTOR_TABS = [
   ["activity", "Activity"], ["changes", "Changes"], ["terminal", "Terminal"],
@@ -111,22 +111,24 @@ function approvalRows(approvals) {
 
 function contractPanel(task) {
   const contract = task.contract;
+  const profiles = window.COCKPIT?.effortProfiles || {};
+  const radio = (name, value, label, checked, disabled) =>
+    `<label><input type="radio" name="${name}" value="${value}"${checked ? " checked" : ""}${disabled ? " disabled" : ""}><span>${label}</span></label>`;
+  const segmented = (name, values, labelFor, checkedValue, disabled = false) =>
+    `<div class="segmented">${values.map((v) => radio(name, v, labelFor(v), v === checkedValue, disabled)).join("")}</div>`;
+  const effortLabel = (level) => {
+    const ceiling = level === "off" ? 0 : profiles[level];
+    return ceiling ? `${EFFORT_LABELS[level]} · ${ceiling}` : EFFORT_LABELS[level];
+  };
+  const countLabel = (v) => (v === "0" ? "Off" : v === "custom" ? "Custom" : v);
+  const typeLabel = (v) => v[0].toUpperCase() + v.slice(1);
+  const frameworkLabel = (v) => (v === "none" ? "None" : "AOCS Omega");
+
   if (!contract) {
     if (["completed", "failed", "cancelled"].includes(task.status)) return "";
     const warning = task.contract_error
       ? `<p><strong>Run Contract integrity error:</strong> ${esc(task.contract_error)}</p>`
       : `<p>This chat-created session has no Run Contract yet.</p>`;
-    const profiles = window.COCKPIT?.effortProfiles || {};
-    const radio = (name, value, label, checked) =>
-      `<label><input type="radio" name="${name}" value="${value}"${checked ? " checked" : ""}><span>${label}</span></label>`;
-    const segmented = (name, values, labelFor, checkedValue) =>
-      `<div class="segmented">${values.map((v) => radio(name, v, labelFor(v), v === checkedValue)).join("")}</div>`;
-    const effortLabel = (level) => {
-      const ceiling = level === "off" ? 0 : profiles[level];
-      return ceiling ? `${EFFORT_LABELS[level]} · ${ceiling}` : EFFORT_LABELS[level];
-    };
-    const countLabel = (v) => (v === "0" ? "Off" : v === "custom" ? "Custom" : v);
-    const typeLabel = (v) => v[0].toUpperCase() + v.slice(1);
     return `<section class="contract-panel">
       <div class="contract-title"><div><span class="eyebrow">Operator setup</span><strong>${task.contract_error ? "Repair contract" : "Attach run contract"}</strong></div></div>
       ${warning}<div class="contract-setup">
@@ -134,7 +136,7 @@ function contractPanel(task) {
         <fieldset class="contract-row"><legend>EFFORT <small>procedure credits</small></legend>${segmented("attachEffort", EFFORT_LEVELS, effortLabel, "off")}</fieldset>
         <fieldset class="contract-row"><legend>ULTRA WORKFLOW <small>sequential candidates</small></legend>${segmented("attachUltra", ULTRA_OPTIONS, countLabel, "0")}
           <input id="attachUltraCustom" class="attach-custom is-hidden" type="number" min="1" max="${ULTRA_CUSTOM_MAX}" value="10" aria-label="Maximum candidates"></fieldset>
-        <fieldset class="contract-row"><legend>FRAMEWORK</legend>${segmented("attachFramework", ["none", "aocs_omega"], (v) => (v === "none" ? "None" : "AOCS Omega"), "none")}</fieldset>
+        <fieldset class="contract-row"><legend>FRAMEWORK</legend>${segmented("attachFramework", ["none", "aocs_omega"], frameworkLabel, "none")}</fieldset>
         <fieldset class="contract-row"><legend>LOOPS <small>bounded refinement</small></legend>${segmented("attachLoops", LOOPS_OPTIONS, countLabel, "0")}
           <input id="attachLoopsCustom" class="attach-custom is-hidden" type="number" min="1" max="${LOOPS_CUSTOM_MAX}" value="12" aria-label="Maximum passes"></fieldset>
       </div>
@@ -143,18 +145,35 @@ function contractPanel(task) {
       <button class="primary-button small" data-action="attach-contract" type="button">${task.contract_error ? "Repair and re-confirm" : "Confirm contract"}</button>
     </section>`;
   }
+
+  // Locked: the SAME pill panel stays on the page permanently, read-only,
+  // with live spend/pass meters — the operator sees the running contract at
+  // every turn. Values are immutable by design (a contract you can quietly
+  // edit isn't a contract); mid-run changes go through request_extension
+  // approvals or a fork.
   const spent = task.effort?.spent || 0;
   const ceiling = task.effort?.ceiling || contract.credit_ceiling || 0;
   const percent = ceiling ? Math.min(100, Math.round((spent / ceiling) * 100)) : 0;
   const loops = task.loops || [];
-  return `<section class="contract-panel">
+  const countChoice = (options, n) => (n ? (options.includes(String(n)) ? String(n) : "custom") : "0");
+  const ultraChoice = countChoice(ULTRA_OPTIONS, contract.candidate_count);
+  const loopsChoice = countChoice(LOOPS_OPTIONS, contract.max_loops);
+  return `<section class="contract-panel contract-locked">
     <div class="contract-title"><div><span class="eyebrow">Locked run contract</span><strong>${esc(contract.task_type)}</strong></div><code>${esc(String(contract.contract_hash).slice(0, 10))}</code></div>
-    <div class="control-meters">
-      <div><span>EFFORT</span><strong>${esc(contract.effort_level)}${ceiling ? ` · ${spent}/${ceiling}` : " · Off"}</strong><i style="--meter:${percent}%"></i></div>
-      <div><span>ULTRA</span><strong>${contract.candidate_count ? `${contract.candidate_count} candidates` : "Off"}</strong></div>
-      <div><span>FRAMEWORK</span><strong>${contract.framework === "aocs_omega" ? "AOCS Omega" : "None"}</strong></div>
-      <div><span>LOOPS</span><strong>${contract.max_loops ? `${loops.length}/${contract.max_loops} used` : "Off"}</strong></div>
+    <div class="contract-setup">
+      <fieldset class="contract-row"><legend>TASK TYPE</legend>${segmented("attachTaskType", TASK_TYPES, typeLabel, contract.task_type, true)}</fieldset>
+      <fieldset class="contract-row"><legend>EFFORT <small>${ceiling ? `${spent}/${ceiling} credits spent` : "procedure credits"}</small></legend>
+        ${segmented("attachEffort", EFFORT_LEVELS, effortLabel, contract.effort_level, true)}
+        ${ceiling ? `<i class="locked-meter" style="--meter:${percent}%"></i>` : ""}</fieldset>
+      <fieldset class="contract-row"><legend>ULTRA WORKFLOW <small>sequential candidates</small></legend>
+        ${segmented("attachUltra", ULTRA_OPTIONS, countLabel, ultraChoice, true)}
+        ${ultraChoice === "custom" ? `<input id="attachUltraCustom" class="attach-custom" type="number" value="${Number(contract.candidate_count)}" disabled aria-label="Maximum candidates">` : ""}</fieldset>
+      <fieldset class="contract-row"><legend>FRAMEWORK</legend>${segmented("attachFramework", ["none", "aocs_omega"], frameworkLabel, contract.framework, true)}</fieldset>
+      <fieldset class="contract-row"><legend>LOOPS <small>${contract.max_loops ? `${loops.length}/${contract.max_loops} passes used` : "bounded refinement"}</small></legend>
+        ${segmented("attachLoops", LOOPS_OPTIONS, countLabel, loopsChoice, true)}
+        ${loopsChoice === "custom" ? `<input id="attachLoopsCustom" class="attach-custom" type="number" value="${Number(contract.max_loops)}" disabled aria-label="Maximum passes">` : ""}</fieldset>
     </div>
+    <p class="contract-hint">Locked · to change course mid-run, ask ChatGPT for <code>request_extension</code> (more credits/loops, one-shot approval) or fork a new session.</p>
   </section>`;
 }
 

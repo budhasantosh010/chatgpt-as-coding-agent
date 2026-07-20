@@ -9,7 +9,7 @@
 //   3. play() runs one-shot transitions guarded by stale-cancel tokens.
 //   4. Every requestAnimationFrame loop dies when its DOM detaches.
 //   5. prefers-reduced-motion ⇒ settled states only; zero cinematics.
-import { boundedCount, ULTRA_CUSTOM_MAX, LOOPS_CUSTOM_MAX } from "./contract-options.mjs?v=21";
+import { boundedCount, ULTRA_CUSTOM_MAX, LOOPS_CUSTOM_MAX } from "./contract-options.mjs?v=22";
 
 const reduced = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 const dprCap = () => Math.min(1.5, window.devicePixelRatio || 1);

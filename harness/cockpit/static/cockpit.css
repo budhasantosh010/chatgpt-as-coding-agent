@@ -362,3 +362,11 @@ dialog h2 { margin:0; font-size:18px; }.dialog-subtitle { margin:3px 0 17px; col
 
 /* zone label must escape the generic segmented-pill span styling */
 .segmented.has-thumb .fx-zone-label,.segmented .fx-zone-label { position:absolute; right:12px; bottom:34px; z-index:2; display:block; border:0; padding:0; background:transparent; box-shadow:none; transform:none; }
+
+/* Locked contract: same pills, read-only, persistent */
+.contract-locked .segmented label { cursor:default; }
+.contract-locked .segmented input:not(:checked) + span { opacity:.45; }
+.contract-locked .segmented label:hover input:not(:checked) + span { transform:none; border-color:var(--line-strong); }
+.locked-meter { display:block; height:3px; margin-top:9px; border-radius:99px; background:linear-gradient(90deg,var(--blue) var(--meter),var(--line) var(--meter)); }
+.contract-hint { margin:12px 1px 0; color:var(--faint); font-size:11px; }
+.contract-hint code { font:10.5px var(--mono); color:var(--muted); }
