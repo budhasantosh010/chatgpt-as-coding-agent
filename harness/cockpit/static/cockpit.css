@@ -256,3 +256,109 @@ dialog h2 { margin:0; font-size:18px; }.dialog-subtitle { margin:3px 0 17px; col
   from { opacity:0; transform:translateY(4px); }
   to { opacity:1; transform:none; }
 }
+
+/* ============================================================
+   Category A (Prototype 14) motion layer — contract controls.
+   Persistent "settled" looks live OUTSIDE the media query;
+   every cinematic (keyframe/infinite) lives INSIDE
+   prefers-reduced-motion: no-preference. fx-* classes are set
+   by contract-motion.mjs, which observes the real form state.
+   ============================================================ */
+.fx-host { position:relative; }
+.fx-host > :not(.fx-global) { position:relative; z-index:1; }
+.fx-global { position:absolute; inset:0; z-index:0; pointer-events:none; opacity:0; }
+.fx-global.fx-live { opacity:1; }
+.fx-field { position:absolute; inset:-20px -2px; z-index:0; width:calc(100% + 4px); height:calc(100% + 40px); pointer-events:none; opacity:0; }
+.fx-field.fx-live { opacity:1; }
+.fx-host.fx-awake { border-color:color-mix(in srgb,#8b5cf6 34%,var(--line-strong)); box-shadow:inset 0 0 44px color-mix(in srgb,#7c3aed 7%,transparent),0 0 28px color-mix(in srgb,#7c3aed 9%,transparent); }
+.fx-badge { position:absolute; z-index:30; top:10px; right:12px; padding:5px 10px; border:1px solid color-mix(in srgb,#a855f7 45%,var(--line-strong)); border-radius:999px; background:color-mix(in srgb,#6d28d9 14%,var(--canvas)); color:color-mix(in srgb,#7c3aed 70%,var(--ink)); font-size:9px; font-weight:800; letter-spacing:.14em; opacity:0; pointer-events:none; white-space:nowrap; }
+:root[data-theme="dark"] .fx-badge { background:rgba(74,29,149,.76); border-color:rgba(204,165,255,.42); color:#efe4ff; }
+
+/* EFFORT thumb tiers — restrained climb, purple field at XHigh/Max */
+.seg-thumb.fx-tier-low { background:linear-gradient(135deg,#47617f,#33445f); }
+.seg-thumb.fx-tier-med { background:linear-gradient(135deg,#3d5aa8,#3a3f7e); box-shadow:0 0 14px rgba(78,108,214,.28); }
+.seg-thumb.fx-tier-high { background:linear-gradient(135deg,#4547b8,#5f3a95); box-shadow:0 0 18px rgba(92,79,220,.4); }
+.seg-thumb.fx-tier-xhigh,.seg-thumb.fx-tier-max { background:linear-gradient(120deg,#5b2fc9,#a53eee); box-shadow:0 0 24px rgba(138,75,239,.6),0 0 56px rgba(107,44,213,.24); border:1px solid rgba(201,164,252,.75); }
+.segmented.fx-xhigh,.segmented.fx-max { border-radius:9px; box-shadow:inset 0 0 0 1px color-mix(in srgb,#a855f7 30%,transparent),0 0 26px color-mix(in srgb,#7c3aed 12%,transparent); }
+.fx-settle { position:absolute; inset:2px; z-index:0; border-radius:8px; pointer-events:none; opacity:0; background:repeating-linear-gradient(90deg,transparent 0 10px,color-mix(in srgb,#a855f7 8%,transparent) 11px 12px),linear-gradient(90deg,color-mix(in srgb,#6366f1 6%,transparent),color-mix(in srgb,#a855f7 13%,transparent)); transition:opacity .35s ease; }
+.segmented.fx-xhigh .fx-settle,.segmented.fx-max .fx-settle { opacity:1; }
+.segmented.fx-max .fx-settle { background:repeating-linear-gradient(90deg,transparent 0 8px,color-mix(in srgb,#c084fc 11%,transparent) 9px 10px),linear-gradient(90deg,color-mix(in srgb,#6366f1 9%,transparent),color-mix(in srgb,#c026d3 17%,transparent)); }
+.fx-ring { position:absolute; z-index:6; right:4px; top:50%; width:64px; height:64px; border:1px solid color-mix(in srgb,#c4b5fd 85%,transparent); border-radius:50%; opacity:0; transform:translate(50%,-50%) scale(.14); pointer-events:none; }
+.contract-estimate.fx-hot { border-color:color-mix(in srgb,#a855f7 42%,var(--line)); box-shadow:0 0 18px color-mix(in srgb,#7c3aed 12%,transparent); color:var(--ink); }
+
+/* TASK semantic icons */
+.fx-ico { display:inline-block; width:14px; height:14px; margin-right:6px; vertical-align:-2px; }
+.fx-ico svg { width:100%; height:100%; overflow:visible; }
+.fx-ico path,.fx-ico circle,.fx-ico line { fill:none; stroke:currentColor; stroke-width:1.6; stroke-linecap:round; stroke-linejoin:round; }
+
+/* ULTRA constellation + FRAMEWORK network strips (settled = visible, calm) */
+.fx-strip { flex-basis:100%; width:100%; height:0; opacity:0; pointer-events:none; transition:height .3s ease,opacity .3s ease; }
+.segmented.fx-lanes-on > .fx-strip { height:40px; opacity:1; margin-top:5px; }
+.segmented.fx-net-on > .fx-strip { height:34px; opacity:1; margin-top:5px; }
+.fx-strip path { fill:none; stroke:color-mix(in srgb,#a855f7 62%,var(--line-strong)); stroke-width:1.3; }
+:root[data-theme="dark"] .fx-strip path { stroke:rgba(225,180,255,.82); }
+.fx-strip .fx-lane { stroke:color-mix(in srgb,#a855f7 26%,transparent); stroke-width:1; }
+.fx-strip circle { fill:color-mix(in srgb,#7c3aed 75%,var(--ink)); }
+:root[data-theme="dark"] .fx-strip circle { fill:#f4edff; }
+.fx-zone-label { position:absolute; right:10px; bottom:34px; z-index:2; font-size:8px; font-weight:700; letter-spacing:.14em; color:color-mix(in srgb,#7c3aed 55%,var(--faint)); opacity:0; pointer-events:none; transition:opacity .3s ease; }
+.segmented.fx-lanes-on > .fx-zone-label { opacity:1; }
+.segmented.fx-strong { box-shadow:inset 0 0 0 1px color-mix(in srgb,#c026d3 26%,transparent),0 0 30px color-mix(in srgb,#c026d3 10%,transparent); border-radius:9px; }
+.fx-net-node { fill:color-mix(in srgb,#7c3aed 70%,var(--ink)); }
+.fx-net-pulse { fill:#fff; opacity:0; }
+:root[data-theme="dark"] .fx-net-pulse { filter:drop-shadow(0 0 6px #eadcff); }
+
+/* LOOPS countable orbit */
+.fx-orbit { position:absolute; z-index:6; width:52px; height:52px; border:1px solid color-mix(in srgb,#38bdf8 44%,var(--line-strong)); border-radius:50%; transform:translate(-50%,-50%); opacity:0; pointer-events:none; transition:left .4s cubic-bezier(.2,.88,.24,1.08),top .3s ease,opacity .25s ease; }
+.segmented.fx-loops-on > .fx-orbit { opacity:1; }
+.segmented.fx-loops-on .seg-thumb { box-shadow:0 0 20px rgba(77,183,255,.3); }
+.fx-marker { position:absolute; width:5px; height:5px; border-radius:50%; background:color-mix(in srgb,#0ea5e9 80%,var(--ink)); transform:translate(-50%,-50%); }
+:root[data-theme="dark"] .fx-marker { background:#e9fbff; box-shadow:0 0 9px #5ed5ff; }
+
+/* Confirm: energy transfer */
+.fx-beams { position:absolute; inset:0; z-index:6; width:100%; height:100%; pointer-events:none; overflow:visible; }
+.fx-beams path { fill:none; }
+.fx-beam-glow { stroke-width:7; stroke-linecap:round; opacity:0; }
+.fx-beam-core { stroke-width:1.7; stroke-linecap:round; stroke-dasharray:9 12; stroke-dashoffset:260; opacity:0; }
+.fx-busy { pointer-events:none; }
+.primary-button.fx-success { background:linear-gradient(135deg,#f5f3ff,#d8c8ff); color:#24143f; box-shadow:0 0 34px rgba(178,113,255,.55); }
+
+@media (prefers-reduced-motion:no-preference) {
+  .fx-global,.fx-field { transition:opacity .3s ease; }
+  .fx-badge.fx-show { animation:fxBadge 1.75s cubic-bezier(.2,.8,.2,1); }
+  .segmented.fx-flash { animation:fxFlash .8s ease-out; }
+  .fx-ring.fx-pulse { animation:fxRing 1s ease-out; }
+  .segmented.fx-xhigh .fx-settle,.segmented.fx-max .fx-settle { animation:fxGridDrift 3.2s linear infinite; }
+  .fx-strip path.fx-draw { stroke-dasharray:240; stroke-dashoffset:240; animation:fxDraw .95s ease-out forwards; }
+  .fx-strip circle.fx-node { opacity:0; animation:fxNode .76s ease-out forwards; }
+  .fx-orbit.fx-spin { animation:fxOrbit .95s ease-out; }
+  .fx-orbit.fx-spin .fx-marker { opacity:0; animation:fxMarker .72s ease-out forwards; }
+  .segmented label.fx-fire .fx-ico { animation:fxIcoPop .72s ease-out; }
+  .segmented label.fx-fire .fx-scan { animation:fxScan .78s ease-out; }
+  .segmented label.fx-fire .fx-route { stroke-dasharray:46; stroke-dashoffset:46; animation:fxDraw .82s ease-out forwards; }
+  .segmented label.fx-fire .fx-radar { animation:fxRadar .88s ease-out; transform-origin:center; }
+  .segmented label.fx-fire .fx-radar.fx-r2 { animation-delay:.14s; }
+  .fx-launching { animation:fxShellLock 1.55s ease-out; }
+  .fx-launching:after { content:""; position:absolute; z-index:7; inset:0; border-radius:inherit; pointer-events:none; padding:1px; background:conic-gradient(from 0deg,transparent 0 75%,rgba(174,120,255,.85) 82%,transparent 90%); -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0); -webkit-mask-composite:xor; mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0); mask-composite:exclude; animation:fxBorderTrace 1.7s ease-out; }
+  .primary-button.fx-absorb { animation:fxAbsorb 1.2s ease-out; }
+  .fx-beams .fx-beam-glow { animation:fxBeamGlow 1.45s ease-out forwards; }
+  .fx-beams .fx-beam-core { animation:fxBeamCore 1.45s cubic-bezier(.18,.72,.2,1) forwards; }
+}
+@keyframes fxBadge { 0%{opacity:0;transform:translateY(-7px) scale(.96)} 14%,76%{opacity:1;transform:translateY(0) scale(1)} 100%{opacity:0;transform:translateY(5px) scale(.98)} }
+@keyframes fxFlash { 0%{background:color-mix(in srgb,#a855f7 10%,transparent)} 100%{background:transparent} }
+@keyframes fxRing { 0%{opacity:.95;transform:translate(50%,-50%) scale(.14)} 100%{opacity:0;transform:translate(50%,-50%) scale(2.1)} }
+@keyframes fxGridDrift { to{background-position:64px 0,0 0} }
+@keyframes fxDraw { to{stroke-dashoffset:0} }
+@keyframes fxNode { 0%{opacity:0;transform:scale(.2)} 65%{opacity:1;transform:scale(1.25)} 100%{opacity:1;transform:scale(1)} }
+@keyframes fxOrbit { 0%{transform:translate(-50%,-50%) scale(.45) rotate(0)} 100%{transform:translate(-50%,-50%) scale(1) rotate(320deg)} }
+@keyframes fxMarker { 0%{opacity:0;transform:translate(-50%,-50%) scale(.2)} 65%{opacity:1;transform:translate(-50%,-50%) scale(1.35)} 100%{opacity:1;transform:translate(-50%,-50%) scale(1)} }
+@keyframes fxIcoPop { 0%{transform:scale(.75)} 58%{transform:scale(1.18)} 100%{transform:scale(1)} }
+@keyframes fxScan { 0%{transform:translateY(-7px);opacity:0} 18%{opacity:1} 100%{transform:translateY(8px);opacity:0} }
+@keyframes fxRadar { 0%{opacity:.9;transform:scale(.25)} 100%{opacity:0;transform:scale(1.8)} }
+@keyframes fxShellLock { 0%,100%{transform:scale(1)} 48%{transform:scale(.995)} }
+@keyframes fxBorderTrace { 0%{opacity:0;transform:rotate(-60deg)} 20%{opacity:1} 100%{opacity:0;transform:rotate(300deg)} }
+@keyframes fxAbsorb { 0%{transform:scale(1)} 35%{transform:scale(.96)} 58%{transform:scale(1.02);box-shadow:0 0 38px rgba(174,112,255,.8)} 100%{transform:scale(1)} }
+@keyframes fxBeamGlow { 0%{opacity:0} 18%,72%{opacity:.2} 100%{opacity:0} }
+@keyframes fxBeamCore { 0%{opacity:0;stroke-dashoffset:260} 15%,82%{opacity:1} 100%{opacity:0;stroke-dashoffset:0} }
+
+/* zone label must escape the generic segmented-pill span styling */
+.segmented.has-thumb .fx-zone-label,.segmented .fx-zone-label { position:absolute; right:12px; bottom:34px; z-index:2; display:block; border:0; padding:0; background:transparent; box-shadow:none; transform:none; }

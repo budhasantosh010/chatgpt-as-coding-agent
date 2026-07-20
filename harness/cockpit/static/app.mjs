@@ -1,11 +1,14 @@
-import { getJSON, postJSON } from "./api.mjs?v=18";
-import { initResizableLayout } from "./layout.mjs?v=18";
-import { mountRenderer } from "./render.mjs?v=18";
-import { createStore } from "./state.mjs?v=18";
+import { getJSON, postJSON } from "./api.mjs?v=21";
+import { initResizableLayout } from "./layout.mjs?v=21";
+import { mountRenderer } from "./render.mjs?v=21";
+import { createStore } from "./state.mjs?v=21";
 import {
   EFFORT_LABELS, ULTRA_CUSTOM_MAX, LOOPS_CUSTOM_MAX,
   boundedCount, contractEstimate,
-} from "./contract-options.mjs?v=18";
+} from "./contract-options.mjs?v=21";
+import {
+  settleContractMotion, playContractMotion, refreshCustomCounts, playLaunch,
+} from "./contract-motion.mjs?v=21";
 
 const store = createStore();
 const loadingEvents = new Set();
@@ -74,7 +77,8 @@ function openNewTask(projectId) {
   document.getElementById("ntProjName").textContent = `In ${project.name}`;
   updateContractEstimate();
   document.getElementById("newTaskDlg").showModal();
-  wireSegmented(document.getElementById("newTaskDlg"));
+  settleContractMotion(document.getElementById("newTaskDlg"));  // icons first (widths settle)
+  wireSegmented(document.getElementById("newTaskDlg"));         // then position thumbs
 }
 
 async function addProject() {
@@ -177,6 +181,10 @@ const actions = {
   async attachContract() {
     const task = currentTask(); if (!task) return;
     const custom = (id) => document.getElementById(id)?.value;
+    const button = document.querySelector('[data-action="attach-contract"]');
+    // The energy-transfer animation runs alongside the API call; the REAL
+    // result decides success/fail — never the animation.
+    const fx = button ? playLaunch(button.closest(".contract-panel"), button) : null;
     try {
       await postJSON("/api/task/contract", {
         task_id: task.id, task_type: checkedValue("attachTaskType") || "build",
@@ -186,9 +194,10 @@ const actions = {
         framework: checkedValue("attachFramework") || "none",
         max_loops: boundedCount(checkedValue("attachLoops") || "0", custom("attachLoopsCustom"), LOOPS_CUSTOM_MAX),
       });
+      await fx?.success("Contract locked ✓");
       toast(task.contract_error ? "Run Contract repaired" : "Run Contract confirmed");
       await refresh();
-    } catch (error) { toast(error.message, true); }
+    } catch (error) { fx?.fail(); toast(error.message, true); }
   },
   wireDropzone(zone) {
     if (!zone) return;
@@ -210,12 +219,21 @@ const actions = {
 
 const renderer = mountRenderer(store, actions);
 store.subscribe((state) => {
+  // Never chop the contract-lock cinematic mid-flight: skip this rebuild and
+  // let the explicit refresh() after success (or the next poll) render. The
+  // 8s watchdog means a hung confirm request can never freeze the workspace.
+  const launching = document.querySelector(".fx-launching");
+  if (launching && Date.now() - Number(launching.dataset.fxLaunchStart || 0) < 8000) {
+    void loadTaskData(state);
+    return;
+  }
   // Live events re-render the workspace; without capture/restore that would
   // silently reset the operator's un-confirmed contract choices to Off.
   const saved = captureAttachChoices();
   renderer.render(state);
   restoreAttachChoices(saved);
-  wireSegmented();
+  settleContractMotion();   // rehydrate settled visuals (may grow labels via icons)
+  wireSegmented();          // then measure + position thumbs against final widths
   updateAttachEstimate();
   void loadTaskData(state);
 });
@@ -335,13 +353,23 @@ function wireSegmented(root = document) {
     positionThumb(group);
   }
 }
+// Estimate count-up state lives at MODULE level, keyed by element id, so it
+// survives the innerHTML rebuilds that replace the element itself. That is
+// what prevents (a) replaying the count-up on every rerender, (b) overlapping
+// loops fighting over the text, (c) counting up from 0 after each rebuild.
+const estimateState = {};
 function animateEstimate(element, text) {
-  const previous = Number(element.dataset.total || 0);
+  const state = estimateState[element.id] || (estimateState[element.id] = { text: "", total: 0, token: 0 });
   const next = Number(text.match(/≤ (\d+)/)?.[1] || 0);
-  element.dataset.total = String(next);
-  if (previous === next || !next || reducedMotion()) { element.textContent = text; return; }
+  const token = ++state.token;             // supersedes any in-flight count-up
+  const previous = state.total;
+  const unchanged = state.text === text;
+  state.text = text;
+  state.total = next;
+  if (unchanged || !next || previous === next || reducedMotion()) { element.textContent = text; return; }
   const start = performance.now();
   const step = (now) => {
+    if (!element.isConnected || state.token !== token) return;
     const t = Math.min(1, (now - start) / 340);
     const eased = 1 - (1 - t) ** 3;
     element.textContent = text.replace(`≤ ${next}`, `≤ ${Math.round(previous + (next - previous) * eased)}`);
@@ -355,11 +383,16 @@ function animateEstimate(element, text) {
 document.addEventListener("change", (event) => {
   const target = event.target;
   if (!(target instanceof Element)) return;
-  if (target.matches(".segmented input")) positionThumb(target.closest(".segmented"));
+  if (target.matches(".segmented input")) {
+    positionThumb(target.closest(".segmented"));
+    playContractMotion(target);
+  }
+  refreshCustomCounts(target);
   if ((target.getAttribute("name") || target.id || "").startsWith("attach")) updateAttachEstimate();
 });
 window.addEventListener("resize", () => {
   for (const group of document.querySelectorAll(".segmented")) positionThumb(group);
+  settleContractMotion();
 });
 wireSegmented();
 document.getElementById("ntCreate").addEventListener("click", async (event) => {
@@ -375,18 +408,21 @@ document.getElementById("ntCreate").addEventListener("click", async (event) => {
   const max_loops = contractCount("ntLoops", "ntLoopsCustom", 100);
   const task_type = selectedContractValue("ntTaskType") || "build";
   if (!project || !goal) { toast("Choose a project and enter a goal", true); return; }
+  // Energy transfer plays alongside the request; the REAL result decides.
+  const fx = playLaunch(document.querySelector("#newTaskDlg form"), event.currentTarget);
   try {
     const result = await postJSON("/api/task/new", {
       project_path: project.path, goal, mode, isolation, effort_level,
       credit_ceiling: effortCeilings[effort_level], candidate_count,
       machine_concurrency: window.COCKPIT.machineConcurrency, framework, max_loops, task_type,
     });
+    await fx.success("Contract locked ✓");
     document.getElementById("newTaskDlg").close();
     document.getElementById("ntGoal").value = "";
     await refresh();
     if (result.task_id) store.selectTask(result.task_id);
     toast(result.needs_approval ? "Session needs approval" : "Session created");
-  } catch (error) { toast(error.message, true); }
+  } catch (error) { fx.fail(); toast(error.message, true); }
 });
 
 const eventSource = new EventSource("/events");

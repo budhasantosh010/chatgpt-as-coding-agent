@@ -126,6 +126,31 @@ def test_contract_option_lists_cannot_drift_between_uis(client):
     assert not re.search(r'<option value="\d', render)
 
 
+def test_motion_layer_versioned_served_and_reduced_motion_safe(client):
+    """Category A motion handoff hard requirements: one cache-bust version
+    across every static asset (a mismatch silently serves stale modules),
+    cinematics gated behind prefers-reduced-motion, rAF loops that die with
+    their DOM, and the animation layer observing (never owning) form state."""
+    import re
+
+    c, cp, tmp = client
+    html = c.get("/").text
+    app = c.get("/static/app.mjs").text
+    render = c.get("/static/render.mjs").text
+    motion = c.get("/static/contract-motion.mjs").text
+    css = c.get("/static/cockpit.css").text
+
+    versions = set(re.findall(r"\?v=(\d+)", html + app + render + motion))
+    assert len(versions) == 1, f"cache-bust versions diverged: {versions}"
+
+    assert "contract-motion.mjs" in app
+    assert "prefers-reduced-motion" in motion
+    assert "isConnected" in motion
+    assert "prefers-reduced-motion:no-preference" in css
+    # the animation layer must never decide outcomes: success/fail hooks only
+    assert "playLaunch" in motion and "fail()" in motion
+
+
 def test_contract_estimate_reads_server_profiles_and_concurrency(client):
     c, cp, tmp = client
     cp.config.effort_profiles = {
