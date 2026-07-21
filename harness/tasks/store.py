@@ -408,6 +408,50 @@ class TaskStore:
             task_id, lambda task: setattr(task, "pinned", bool(pinned))
         ) is not None
 
+    def set_task_archived(self, task_id: str, archived: bool) -> bool:
+        return self.mutate_task(
+            task_id, lambda task: setattr(task, "archived", bool(archived))
+        ) is not None
+
+    def delete_task(self, task_id: str) -> bool:
+        """Permanently erase one task and everything hanging off it.
+
+        Deliberately refuses to delete a task that fathered candidates: the
+        children's audit trail references it, and a half-deleted family is worse
+        than a stale row. Archive those instead.
+        """
+        task = self.get_task(task_id)
+        if task is None:
+            return False
+        with self._lock:
+            self._db.execute("BEGIN IMMEDIATE")
+            try:
+                kids = self._db.execute(
+                    "SELECT id FROM tasks WHERE json_extract(data,'$.parent_id')=?",
+                    (task_id,),
+                ).fetchone()
+                if kids:
+                    raise ValueError(
+                        "[HAS_CHILDREN] this session has forks or ULTRA candidates "
+                        "pointing at it — archive it instead of deleting"
+                    )
+                if task.credit_scope_id:
+                    self._db.execute("DELETE FROM credits WHERE scope_id=?", (task.credit_scope_id,))
+                    self._db.execute("DELETE FROM credit_scopes WHERE scope_id=?", (task.credit_scope_id,))
+                if task.contract_id:
+                    self._db.execute(
+                        "DELETE FROM run_contracts WHERE contract_id=? AND root_task_id=?",
+                        (task.contract_id, task_id),
+                    )
+                for table in ("approvals", "operations", "loop_passes", "events"):
+                    self._db.execute(f"DELETE FROM {table} WHERE task_id=?", (task_id,))
+                self._db.execute("DELETE FROM tasks WHERE id=?", (task_id,))
+                self._db.commit()
+            except Exception:
+                self._db.rollback()
+                raise
+        return True
+
     def set_task_chat_url(self, task_id: str, chat_url: str) -> bool:
         return self.mutate_task(
             task_id, lambda task: setattr(task, "chat_url", str(chat_url))

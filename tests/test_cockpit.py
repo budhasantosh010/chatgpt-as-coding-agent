@@ -162,10 +162,62 @@ def test_renderer_skips_dom_rebuild_when_markup_unchanged(client):
     c, cp, tmp = client
     render = c.get("/static/render.mjs").text
     assert "__renderedHTML" in render, "renderer lost its markup memoization"
-    assignments = re.findall(r"\.innerHTML\s*=", render)
-    assert len(assignments) == 1, (
-        f"expected exactly one guarded innerHTML assignment (inside setHTML), found {len(assignments)}"
-    )
+    # The five long-lived containers must only ever be written through setHTML.
+    # (Freshly-built detached nodes, e.g. the session menu, may use innerHTML.)
+    for container in ("tree", "tabs", "workspaceEl", "inspectorTabs", "inspectorBody"):
+        assert not re.search(rf"\b{container}\.innerHTML\s*=", render), (
+            f"{container} is rebuilt unconditionally again — that kills focus and swallows clicks"
+        )
+
+
+def test_archive_hides_a_session_without_touching_its_history(client):
+    """Archive is the reversible half of sidebar hygiene: the session, its
+    events and its Run Contract all survive untouched — it just stops showing."""
+    c, cp, tmp = client
+    project = tmp / "archive-project"
+    project.mkdir()
+    pid = cp.store.register_project(str(project), "Archive")
+    task = cp.store.create_task(pid, str(project), goal="archive me")
+
+    assert c.post("/api/task/archived", json={"task_id": task.id, "archived": True},
+                  headers=_hdr(cp)).status_code == 200
+    assert cp.store.get_task(task.id).archived is True
+    listed = [t for t in c.get("/api/state").json()["tasks"] if t["id"] == task.id]
+    assert listed and listed[0]["archived"] is True, "archived tasks stay in the API payload"
+
+    assert c.post("/api/task/archived", json={"task_id": task.id, "archived": False},
+                  headers=_hdr(cp)).status_code == 200
+    assert cp.store.get_task(task.id).archived is False
+
+    bad = c.post("/api/task/archived", json={"task_id": task.id, "archived": "yes"}, headers=_hdr(cp))
+    assert bad.status_code == 400
+    assert c.post("/api/task/archived", json={"task_id": "T-nope", "archived": True},
+                  headers=_hdr(cp)).status_code == 404
+
+
+def test_delete_removes_a_session_and_refuses_the_unsafe_cases(client):
+    """Delete is the one irreversible sidebar action. It must erase the task
+    with its events, refuse a session the engine is mid-flight on, and refuse
+    one whose forks/candidates still reference it."""
+    c, cp, tmp = client
+    project = tmp / "delete-project"
+    project.mkdir()
+    pid = cp.store.register_project(str(project), "Delete")
+    task = cp.store.create_task(pid, str(project), goal="delete me")
+    cp.store.add_event(task.id, "note", text="audit row")
+    assert cp.store.events(task.id), "event fixture must exist before deletion"
+
+    # a running session cannot be deleted out from under the engine
+    cp.store.set_task_status(task.id, "implementing")
+    busy = c.post("/api/task/delete", json={"task_id": task.id}, headers=_hdr(cp))
+    assert busy.status_code == 409
+    assert cp.store.get_task(task.id) is not None
+    cp.store.set_task_status(task.id, "new")
+
+    assert c.post("/api/task/delete", json={"task_id": task.id}, headers=_hdr(cp)).status_code == 200
+    assert cp.store.get_task(task.id) is None
+    assert cp.store.events(task.id) == [], "events must go with the task"
+    assert c.post("/api/task/delete", json={"task_id": task.id}, headers=_hdr(cp)).status_code == 404
 
 
 def test_countable_controls_are_bounded_server_side(client):

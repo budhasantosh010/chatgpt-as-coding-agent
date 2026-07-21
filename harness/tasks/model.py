@@ -81,6 +81,9 @@ class Task(BaseModel):
     chat_url: str = ""
     # Durable navigation preference owned by the task domain, not browser state.
     pinned: bool = False
+    # Archived sessions stay fully intact (audit trail, contract, receipts) and
+    # simply drop out of the default sidebar. Reversible; deletion is not.
+    archived: bool = False
     # Explicit family-wide link to the immutable Run Contract. Empty keeps the
     # pre-four-controls behavior.
     contract_id: str = ""

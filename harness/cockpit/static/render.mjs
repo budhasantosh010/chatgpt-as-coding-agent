@@ -1,7 +1,7 @@
 import {
   EFFORT_LEVELS, EFFORT_LABELS, ULTRA_OPTIONS, LOOPS_OPTIONS, TASK_TYPES,
   ULTRA_CUSTOM_MAX, LOOPS_CUSTOM_MAX,
-} from "./contract-options.mjs?v=24";
+} from "./contract-options.mjs?v=26";
 
 const INSPECTOR_TABS = [
   ["activity", "Activity"], ["changes", "Changes"], ["terminal", "Terminal"],
@@ -46,7 +46,12 @@ export function sortProjectsByActivity(projects, tasks) {
 
 function projectTree(state) {
   const query = state.search.trim().toLowerCase();
-  const allTasks = state.data.tasks;
+  // Archived sessions stay in the store (audit trail intact) but leave the
+  // sidebar until the operator asks to see them.
+  const allTasks = state.showArchived
+    ? state.data.tasks
+    : state.data.tasks.filter((task) => !task.archived);
+  const archivedCount = state.data.tasks.filter((task) => task.archived).length;
   const projectMatches = (project) => project.name.toLowerCase().includes(query);
   const matchingTasks = (project) => allTasks.filter((task) => task.project_id === project.id)
     .filter((task) => !query || projectMatches(project) || taskMatchesSearch(task, query))
@@ -77,18 +82,20 @@ function projectTree(state) {
           <button class="pin-button ${project.pinned ? "is-pinned" : ""}" data-action="pin-project" data-project="${esc(project.id)}" data-pinned="${String(!project.pinned)}" type="button" aria-label="${project.pinned ? "Unpin" : "Pin"} ${esc(project.name)}">Pin</button>
         </div>
         <div class="session-list">${tasks.length ? tasks.map((task) => `
-          <div class="session-row ${task.id === state.selectedTask ? "selected" : ""}">
+          <div class="session-row ${task.id === state.selectedTask ? "selected" : ""} ${task.archived ? "is-archived" : ""}">
             <button class="session-select" data-action="select-task" data-task="${esc(task.id)}" type="button">
-              <span class="status-dot ${statusClass(task.status)}"></span><span class="row-label">${esc(task.title || task.goal)}</span><span class="row-time">${timeAgo(task.updated)}</span>
+              <span class="status-dot ${statusClass(task.status)}"></span><span class="row-label">${esc(task.title || task.goal)}</span><span class="row-time">${task.archived ? "archived" : timeAgo(task.updated)}</span>
             </button>
             <button class="pin-button ${task.pinned ? "is-pinned" : ""}" data-action="pin-task" data-task="${esc(task.id)}" data-pinned="${String(!task.pinned)}" type="button" aria-label="${task.pinned ? "Unpin" : "Pin"} session">Pin</button>
+            <button class="row-menu-button" data-action="session-menu" data-task="${esc(task.id)}" type="button" aria-haspopup="menu" aria-label="Session actions for ${esc(task.title || task.goal)}">...</button>
           </div>`).join("") : `<button class="empty-session" data-action="new-session" data-project="${esc(project.id)}" type="button">+ New session</button>`}</div>
       </section>`;
     }).join("");
 
   if (!state.data.projects.length) return `<div class="sidebar-empty"><p>No projects yet.</p><button class="text-button" data-action="add-project" type="button">Add a folder</button></div>`;
   return `${pinned ? `<section class="sidebar-section"><h2>Pinned</h2>${pinned}</section>` : ""}
-    <section class="sidebar-section"><h2>Projects</h2>${projects || `<p class="no-results">No matches</p>`}</section>`;
+    <section class="sidebar-section"><h2>Projects</h2>${projects || `<p class="no-results">No matches</p>`}</section>
+    ${archivedCount ? `<button class="text-button archive-toggle" data-action="toggle-archived" type="button">${state.showArchived ? "Hide" : "Show"} ${archivedCount} archived</button>` : ""}`;
 }
 
 function sessionTabs(state) {
@@ -290,6 +297,72 @@ function inspector(state) {
   return { tabs, body };
 }
 
+// ---- session row context menu ---------------------------------------------
+// Lives outside the rendered tree so a re-render never rips it out from under
+// the pointer, and closes on any outside click / Escape / scroll.
+function closeSessionMenu() {
+  document.getElementById("sessionMenu")?.remove();
+}
+
+function openSessionMenu(button, store, actions) {
+  const taskId = button.dataset.task;
+  const existing = document.getElementById("sessionMenu");
+  closeSessionMenu();
+  if (existing?.dataset.task === taskId) return;  // second click on the same row toggles
+  const task = store.state.data.tasks.find((item) => item.id === taskId);
+  if (!task) return;
+
+  const menu = document.createElement("div");
+  menu.id = "sessionMenu";
+  menu.className = "row-menu";
+  menu.dataset.task = taskId;
+  menu.setAttribute("role", "menu");
+  menu.innerHTML = `
+    <button role="menuitem" data-menu="open" type="button">Open</button>
+    <button role="menuitem" data-menu="pin" type="button">${task.pinned ? "Unpin" : "Pin"}</button>
+    <button role="menuitem" data-menu="fork" type="button">Fork</button>
+    <button role="menuitem" data-menu="archive" type="button">${task.archived ? "Unarchive" : "Archive"}</button>
+    <button role="menuitem" class="danger" data-menu="delete" type="button">Delete</button>`;
+  document.body.append(menu);
+
+  // Flip above the row when it would overflow the bottom, then clamp BOTH axes:
+  // the anchoring row can itself be scrolled out of view, and a menu the
+  // operator cannot see is worse than one in the wrong place.
+  const box = button.getBoundingClientRect();
+  const { offsetWidth: width, offsetHeight: height } = menu;
+  const clamp = (value, extent, size) => Math.max(8, Math.min(value, extent - size - 8));
+  const preferred = box.bottom + height > window.innerHeight ? box.top - height - 4 : box.bottom + 4;
+  menu.style.left = `${clamp(box.left, window.innerWidth, width)}px`;
+  menu.style.top = `${clamp(preferred, window.innerHeight, height)}px`;
+  menu.querySelector("button")?.focus();
+
+  menu.addEventListener("click", async (event) => {
+    const item = event.target.closest("[data-menu]");
+    if (!item) return;
+    event.stopPropagation();
+    closeSessionMenu();
+    const choice = item.dataset.menu;
+    if (choice === "open") store.selectTask(taskId);
+    if (choice === "pin") await actions.pinTask(taskId, !task.pinned);
+    if (choice === "fork") await actions.fork(taskId);
+    if (choice === "archive") await actions.archiveTask(taskId, !task.archived);
+    if (choice === "delete") await actions.deleteTask(taskId, task.title || task.goal);
+  });
+  const dismiss = (event) => {
+    if (event.type === "keydown" && event.key !== "Escape") return;
+    if (event.type === "click" && menu.contains(event.target)) return;
+    closeSessionMenu();
+    document.removeEventListener("click", dismiss, true);
+    document.removeEventListener("keydown", dismiss, true);
+    window.removeEventListener("scroll", dismiss, true);
+  };
+  setTimeout(() => {
+    document.addEventListener("click", dismiss, true);
+    document.addEventListener("keydown", dismiss, true);
+    window.addEventListener("scroll", dismiss, true);
+  }, 0);
+}
+
 export function mountRenderer(store, actions) {
   const tree = document.getElementById("tree");
   const tabs = document.getElementById("sessionTabs");
@@ -358,6 +431,9 @@ export function mountRenderer(store, actions) {
     if (action === "confirm-criterion") await actions.confirmCriterion(control.dataset.criterion);
     if (action === "confirm-loop") await actions.confirmLoop(control.dataset.pass);
     if (action === "attach-contract") await actions.attachContract();
+    if (action === "toggle-archived") store.toggleArchived();
+    if (action === "session-menu") { openSessionMenu(control, store, actions); return; }
+    closeSessionMenu();
   });
   document.getElementById("sidebarSearch").addEventListener("input", (event) => store.setSearch(event.target.value));
   workspaceEl.addEventListener("change", (event) => { if (event.target.id === "modeSelect") actions.setMode(event.target.value); });

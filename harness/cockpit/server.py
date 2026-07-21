@@ -99,6 +99,9 @@ def build_cockpit_app(cockpit: Cockpit) -> Starlette:
 
     # ---- helpers -----------------------------------------------------------
 
+    # Mid-flight on the engine: deleting the row under a live session strands it.
+    _RUNNING_STATES = {"discovering", "planning", "implementing", "validating", "repairing"}
+
     def guard(request) -> JSONResponse | None:
         if not cockpit.csrf_ok(request):
             return _err("forbidden (bad origin or CSRF token)", 403)
@@ -119,7 +122,7 @@ def build_cockpit_app(cockpit: Cockpit) -> Starlette:
             "acceptance_criteria": t.acceptance_criteria,
             "criteria_v2": t.criteria_v2,
             "pinned_files": t.pinned_files, "chat_url": t.chat_url,
-            "pinned": t.pinned,
+            "pinned": t.pinned, "archived": t.archived,
             "contract_id": t.contract_id,
             "parent_id": t.parent_id, "created": t.created, "updated": t.updated,
         }
@@ -444,6 +447,35 @@ def build_cockpit_app(cockpit: Cockpit) -> Starlette:
             return _err("unknown task", 404)
         return JSONResponse({"ok": True})
 
+    async def api_set_task_archived(request):
+        if (g := guard(request)):
+            return g
+        body = await _json(request)
+        archived = body.get("archived")
+        if not isinstance(archived, bool):
+            return _err("archived must be a boolean")
+        if not cockpit.store.set_task_archived(body.get("task_id", ""), archived):
+            return _err("unknown task", 404)
+        return JSONResponse({"ok": True})
+
+    async def api_delete_task(request):
+        if (g := guard(request)):
+            return g
+        body = await _json(request)
+        task_id = body.get("task_id", "")
+        task = cockpit.store.get_task(task_id)
+        if task is None:
+            return _err("unknown task", 404)
+        # A running session is mid-flight on the engine; deleting the row under
+        # it would strand the work. Stop or finish it first.
+        if task.status.value in _RUNNING_STATES:
+            return _err(f"session is {task.status.value} — stop or finish it before deleting", 409)
+        try:
+            cockpit.store.delete_task(task_id)
+        except ValueError as exc:
+            return _err(str(exc), 409)
+        return JSONResponse({"ok": True})
+
     async def api_satisfy_criterion_operator(request):
         if (g := guard(request)):
             return g
@@ -640,6 +672,8 @@ def build_cockpit_app(cockpit: Cockpit) -> Starlette:
         Route("/api/task/mode", api_set_mode, methods=["POST"]),
         Route("/api/project/pinned", api_set_project_pinned, methods=["POST"]),
         Route("/api/task/pinned", api_set_task_pinned, methods=["POST"]),
+        Route("/api/task/archived", api_set_task_archived, methods=["POST"]),
+        Route("/api/task/delete", api_delete_task, methods=["POST"]),
         Route(
             "/api/task/criterion/operator-satisfy",
             api_satisfy_criterion_operator,

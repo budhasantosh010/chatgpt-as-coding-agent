@@ -1,14 +1,14 @@
-import { getJSON, postJSON } from "./api.mjs?v=24";
-import { initResizableLayout } from "./layout.mjs?v=24";
-import { mountRenderer } from "./render.mjs?v=24";
-import { createStore } from "./state.mjs?v=24";
+import { getJSON, postJSON } from "./api.mjs?v=26";
+import { initResizableLayout } from "./layout.mjs?v=26";
+import { mountRenderer } from "./render.mjs?v=26";
+import { createStore } from "./state.mjs?v=26";
 import {
   EFFORT_LABELS, ULTRA_CUSTOM_MAX, LOOPS_CUSTOM_MAX,
   boundedCount, contractEstimate,
-} from "./contract-options.mjs?v=24";
+} from "./contract-options.mjs?v=26";
 import {
   settleContractMotion, playContractMotion, refreshCustomCounts, playLaunch,
-} from "./contract-motion.mjs?v=24";
+} from "./contract-motion.mjs?v=26";
 
 const store = createStore();
 const loadingEvents = new Set();
@@ -131,10 +131,29 @@ const actions = {
     try { await postJSON("/api/task/pinned", { task_id: taskId, pinned }); await refresh(); }
     catch (error) { toast(error.message, true); }
   },
-  async fork() {
-    const task = currentTask(); if (!task) return;
-    try { await postJSON("/api/task/fork", { task_id: task.id }); toast("Session forked"); await refresh(); }
+  async fork(taskId) {
+    const id = taskId || currentTask()?.id; if (!id) return;
+    try { await postJSON("/api/task/fork", { task_id: id }); toast("Session forked"); await refresh(); }
     catch (error) { toast(error.message, true); }
+  },
+  async archiveTask(taskId, archived) {
+    try {
+      await postJSON("/api/task/archived", { task_id: taskId, archived });
+      toast(archived ? "Session archived" : "Session restored");
+      await refresh();
+    } catch (error) { toast(error.message, true); }
+  },
+  async deleteTask(taskId, label) {
+    // Deletion is the one irreversible action in the sidebar: the session, its
+    // audit events, receipts and contract row all go. Always ask first.
+    const name = (label || taskId).slice(0, 60);
+    if (!window.confirm(`Delete "${name}" permanently?\n\nIts history, receipts and Run Contract are erased. Files on disk are untouched. This cannot be undone — Archive keeps it out of the way instead.`)) return;
+    try {
+      await postJSON("/api/task/delete", { task_id: taskId });
+      store.closeTask(taskId);
+      toast("Session deleted");
+      await refresh();
+    } catch (error) { toast(error.message, true); }
   },
   openChat() {
     const task = currentTask();

@@ -37,6 +37,7 @@ export function createStore() {
     openTabs: storedJSON(OPEN_TABS_KEY, []),
     inspectorTab: localStorage.getItem(INSPECTOR_TAB_KEY) || "activity",
     search: "",
+    showArchived: false,
     collapsedProjects: new Set(),
     taskEvents: new Map(),
     taskDiffs: new Map(),
@@ -87,6 +88,7 @@ export function createStore() {
     },
     setInspectorTab(tab) { state.inspectorTab = tab; localStorage.setItem(INSPECTOR_TAB_KEY, tab); emit(); },
     setSearch(value) { state.search = value; emit(); },
+    toggleArchived() { state.showArchived = !state.showArchived; emit(); },
     toggleProject(id) {
       state.collapsedProjects.has(id) ? state.collapsedProjects.delete(id) : state.collapsedProjects.add(id);
       emit();
