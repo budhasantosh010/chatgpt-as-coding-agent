@@ -17,6 +17,17 @@ export function mergeTaskEvents(existing, incoming) {
     .slice(-400);
 }
 
+// Same ordering the sidebar renders with (render.mjs sortProjectsByActivity):
+// pinned first, then most recent task activity, then name.
+export function defaultProjectId(projects, tasks) {
+  const updatedAt = (project) => tasks.reduce(
+    (latest, task) => (task.project_id === project.id && (task.updated || "") > latest ? task.updated : latest),
+    project.created || "");
+  return [...projects].sort((a, b) => Number(b.pinned) - Number(a.pinned)
+    || updatedAt(b).localeCompare(updatedAt(a))
+    || a.name.localeCompare(b.name))[0]?.id || null;
+}
+
 export function createStore() {
   const listeners = new Set();
   const state = {
@@ -47,7 +58,14 @@ export function createStore() {
         state.selectedTask = state.openTabs[state.openTabs.length - 1];
         state.selectedProject = data.tasks.find((task) => task.id === state.selectedTask)?.project_id || null;
       }
-      if (!state.selectedProject && data.projects.length) state.selectedProject = data.projects[0].id;
+      // Default to the project the operator actually sees at the top of the
+      // sidebar (pinned, then most recently active) — NOT data.projects[0],
+      // which is the oldest folder ever added. New Session names its target
+      // but offers no picker, so a stale default silently starts work (and
+      // writes files) in the wrong folder.
+      if (!state.selectedProject && data.projects.length) {
+        state.selectedProject = defaultProjectId(data.projects, data.tasks);
+      }
       persistTabs(); emit();
     },
     selectProject(id) { state.selectedProject = id; emit(); },

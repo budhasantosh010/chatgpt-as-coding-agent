@@ -14,6 +14,15 @@ _TASK_TYPES = {"build", "review", "plan", "research"}
 _EFFORT_LEVELS = {"off", "low", "medium", "high", "xhigh", "max"}
 _FRAMEWORKS = {"none", "aocs_omega"}
 
+# Operator ceilings for the two countable controls, mirroring the Workbench's
+# custom-entry caps (contract-options.mjs ULTRA_CUSTOM_MAX / LOOPS_CUSTOM_MAX).
+# Enforced when a NEW contract is confirmed, not in the model validator, so
+# contracts already on disk stay loadable. A "bounded refinement" control that
+# accepts 999999 is not a bound, and every creation path (Workbench and the MCP
+# tools ChatGPT drives) funnels through confirmed().
+MAX_CANDIDATE_COUNT = 64
+MAX_LOOPS = 100
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -83,6 +92,10 @@ class RunContract(BaseModel):
         framework: str,
         max_loops: int,
     ) -> "RunContract":
+        if candidate_count > MAX_CANDIDATE_COUNT:
+            raise ValueError(f"candidate_count must be <= {MAX_CANDIDATE_COUNT}")
+        if max_loops > MAX_LOOPS:
+            raise ValueError(f"max_loops must be <= {MAX_LOOPS}")
         data = {
             "contract_version": 1,
             "task_type": task_type,

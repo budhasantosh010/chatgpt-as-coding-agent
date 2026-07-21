@@ -9,13 +9,16 @@
 //   3. play() runs one-shot transitions guarded by stale-cancel tokens.
 //   4. Every requestAnimationFrame loop dies when its DOM detaches.
 //   5. prefers-reduced-motion ⇒ settled states only; zero cinematics.
-import { boundedCount, ULTRA_CUSTOM_MAX, LOOPS_CUSTOM_MAX } from "./contract-options.mjs?v=23";
+import { boundedCount, ULTRA_CUSTOM_MAX, LOOPS_CUSTOM_MAX } from "./contract-options.mjs?v=24";
 
 const reduced = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 const dprCap = () => Math.min(1.5, window.devicePixelRatio || 1);
 const isDark = () => document.documentElement.dataset.theme === "dark";
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const SVG_NS = "http://www.w3.org/2000/svg";
+// Ceiling on how long a launch cinematic may claim to be working. Comfortably
+// longer than a healthy contract POST, shorter than a human's patience.
+const LAUNCH_WATCHDOG_MS = 12000;
 
 const KIND_BY_SUFFIX = {
   tasktype: "task", effort: "effort", ultra: "ultra",
@@ -445,13 +448,25 @@ export function playLaunch(host, button) {
   }
   const cleanup = () => {
     clearTimeout(phaseTimer);
+    clearTimeout(watchdog);
     overlay?.remove();
     host?.classList.remove("fx-launching");
     button.classList.remove("fx-busy", "fx-absorb", "fx-success");
   };
+  // A request that never settles (engine hung, machine asleep) must never leave
+  // the cinematic running: "Locking contract…" forever reads as work in
+  // progress when nothing is happening. The animation stands itself down and
+  // hands the button back; the caller's own error path still owns the message.
+  let settled = false;
+  const settle = () => (settled ? false : (settled = true));
+  const watchdog = setTimeout(() => {
+    if (settle()) { cleanup(); button.textContent = original; }
+  }, LAUNCH_WATCHDOG_MS);
   return {
     async success(message = "Contract locked ✓") {
+      if (!settle()) return;
       clearTimeout(phaseTimer);
+      clearTimeout(watchdog);
       button.classList.remove("fx-absorb");
       button.classList.add("fx-success");
       button.textContent = message;
@@ -460,6 +475,7 @@ export function playLaunch(host, button) {
       button.textContent = original;
     },
     fail() {
+      if (!settle()) return;
       cleanup();
       button.textContent = original;
     },

@@ -168,6 +168,64 @@ def test_renderer_skips_dom_rebuild_when_markup_unchanged(client):
     )
 
 
+def test_countable_controls_are_bounded_server_side(client):
+    """LOOPS/ULTRA are sold as bounds. The Workbench caps custom entry at
+    100/64, but the API took any integer: a contract reading "LOOPS 999999"
+    is not a bounded refinement. Every creation path funnels through
+    RunContract.confirmed(), so the ceiling is enforced there — and NOT in the
+    model validator, so contracts already on disk stay loadable."""
+    from harness.tasks.contracts import MAX_CANDIDATE_COUNT, MAX_LOOPS, RunContract
+
+    def build(**over):
+        args = dict(task_type="build", effort_level="low", credit_ceiling=2,
+                    candidate_count=2, machine_concurrency=2, model_concurrency=1,
+                    framework="none", max_loops=2)
+        args.update(over)
+        return RunContract.confirmed(**args)
+
+    assert build(candidate_count=MAX_CANDIDATE_COUNT).candidate_count == MAX_CANDIDATE_COUNT
+    assert build(max_loops=MAX_LOOPS).max_loops == MAX_LOOPS
+    with pytest.raises(ValueError, match="candidate_count must be <="):
+        build(candidate_count=MAX_CANDIDATE_COUNT + 1)
+    with pytest.raises(ValueError, match="max_loops must be <="):
+        build(max_loops=MAX_LOOPS + 1)
+
+    # an over-cap contract already persisted must still load, not brick the task
+    legit = build()
+    raw = legit.model_dump(mode="json")
+    raw["max_loops"] = 999999
+    raw["contract_hash"] = __import__("harness.tasks.contracts", fromlist=["x"]).contract_hash(raw)
+    assert RunContract.model_validate(raw).max_loops == 999999
+
+
+def test_launch_animation_cannot_outlive_its_request(client):
+    """A contract POST that never settles (engine hung, machine asleep) used to
+    leave the button reading "Locking contract…" forever — the UI claiming work
+    that was not happening. The cinematic self-settles, and the request itself
+    carries a timeout so the operator gets a real error instead of silence."""
+    c, cp, tmp = client
+    motion = c.get("/static/contract-motion.mjs").text
+    api = c.get("/static/api.mjs").text
+    app = c.get("/static/app.mjs").text
+
+    assert "LAUNCH_WATCHDOG_MS" in motion, "launch cinematic lost its watchdog"
+    assert "settled" in motion and "settle()" in motion, "success/fail must be idempotent"
+    assert "AbortSignal.timeout" in api, "postJSON lost its optional timeout"
+    assert "timeoutMs:" in app, "contract writes must pass a timeout"
+
+
+def test_new_session_defaults_to_the_project_the_operator_sees(client):
+    """The New Session dialog names its target project but offers no picker, so
+    a stale default silently starts work in the wrong folder. The default must
+    match the sidebar's own order (pinned, then most recent activity) rather
+    than data.projects[0], the oldest folder ever added."""
+    c, cp, tmp = client
+    state = c.get("/static/state.mjs").text
+    assert "defaultProjectId" in state
+    assert "data.projects[0].id" not in state, "default reverted to raw project order"
+    assert "pinned" in state, "default ordering must consider pinned projects"
+
+
 def test_contract_estimate_reads_server_profiles_and_concurrency(client):
     c, cp, tmp = client
     cp.config.effort_profiles = {

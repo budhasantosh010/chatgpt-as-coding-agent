@@ -1,7 +1,7 @@
 import {
   EFFORT_LEVELS, EFFORT_LABELS, ULTRA_OPTIONS, LOOPS_OPTIONS, TASK_TYPES,
   ULTRA_CUSTOM_MAX, LOOPS_CUSTOM_MAX,
-} from "./contract-options.mjs?v=23";
+} from "./contract-options.mjs?v=24";
 
 const INSPECTOR_TABS = [
   ["activity", "Activity"], ["changes", "Changes"], ["terminal", "Terminal"],

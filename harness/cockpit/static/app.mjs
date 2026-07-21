@@ -1,14 +1,14 @@
-import { getJSON, postJSON } from "./api.mjs?v=23";
-import { initResizableLayout } from "./layout.mjs?v=23";
-import { mountRenderer } from "./render.mjs?v=23";
-import { createStore } from "./state.mjs?v=23";
+import { getJSON, postJSON } from "./api.mjs?v=24";
+import { initResizableLayout } from "./layout.mjs?v=24";
+import { mountRenderer } from "./render.mjs?v=24";
+import { createStore } from "./state.mjs?v=24";
 import {
   EFFORT_LABELS, ULTRA_CUSTOM_MAX, LOOPS_CUSTOM_MAX,
   boundedCount, contractEstimate,
-} from "./contract-options.mjs?v=23";
+} from "./contract-options.mjs?v=24";
 import {
   settleContractMotion, playContractMotion, refreshCustomCounts, playLaunch,
-} from "./contract-motion.mjs?v=23";
+} from "./contract-motion.mjs?v=24";
 
 const store = createStore();
 const loadingEvents = new Set();
@@ -193,7 +193,7 @@ const actions = {
         machine_concurrency: window.COCKPIT.machineConcurrency,
         framework: checkedValue("attachFramework") || "none",
         max_loops: boundedCount(checkedValue("attachLoops") || "0", custom("attachLoopsCustom"), LOOPS_CUSTOM_MAX),
-      });
+      }, { timeoutMs: 20000 });
       await fx?.success("Contract locked ✓");
       toast(task.contract_error ? "Run Contract repaired" : "Run Contract confirmed");
       await refresh();
@@ -415,7 +415,7 @@ document.getElementById("ntCreate").addEventListener("click", async (event) => {
       project_path: project.path, goal, mode, isolation, effort_level,
       credit_ceiling: effortCeilings[effort_level], candidate_count,
       machine_concurrency: window.COCKPIT.machineConcurrency, framework, max_loops, task_type,
-    });
+    }, { timeoutMs: 60000 });  // generous: creating a worktree can be slow
     await fx.success("Contract locked ✓");
     document.getElementById("newTaskDlg").close();
     document.getElementById("ntGoal").value = "";
