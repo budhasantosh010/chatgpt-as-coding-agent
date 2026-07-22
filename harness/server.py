@@ -8,6 +8,9 @@ write the pure fn in ``tools/`` + one wrapper here.
 
 from __future__ import annotations
 
+import functools
+import inspect
+
 from mcp.server.fastmcp import Context, FastMCP, Image
 from mcp.server.transport_security import TransportSecuritySettings
 
@@ -53,6 +56,24 @@ def _task_mutation_denial(server: HarnessServer, task_id: str) -> str | None:
             "plan mode or above"
         )
     return None
+
+@functools.lru_cache(maxsize=None)
+def _takes_task_id_first(fn) -> bool:
+    """Does this task tool take task_id as its first real argument?
+
+    Read from the signature rather than sniffing the value for a "T-" prefix:
+    a goal string or project path can start with anything, and mislabelling
+    which task a call belongs to corrupts the very record it is written for.
+    """
+    params = list(inspect.signature(fn).parameters)
+    return len(params) > 1 and params[1] == "task_id"  # params[0] is `server`
+
+
+def _task_id_argument(fn, args: tuple) -> str | None:
+    if not (args and isinstance(args[0], str) and _takes_task_id_first(fn)):
+        return None
+    return args[0]
+
 
 _EXPECTED_ERRORS = (
     SecurityError,
@@ -697,7 +718,20 @@ def build_mcp(config: Config, server: HarnessServer) -> FastMCP:
 
     # ---- tasks (Codex-style engineering units; the isolation handle) -------
 
+    def _record_task_call(fn, args: tuple) -> None:
+        """Put a lifecycle tool in audit.jsonl and the live feed before it runs.
+
+        Recorded up front, exactly like the capability pipeline's pre-hooks, so
+        a call that raises is still on the record — an audit log that only shows
+        successes is worse than none, because it reads as a complete history.
+        """
+        task_id = _task_id_argument(fn, args)
+        server.record_tool_call(
+            fn.__name__, task_id, args[1:] if task_id else args,
+        )
+
     def _task_call(fn, *args) -> str:
+        _record_task_call(fn, args)
         try:
             return _scrub_server(server, fn(server, *args))
         except _EXPECTED_ERRORS as exc:
@@ -706,10 +740,14 @@ def build_mcp(config: Config, server: HarnessServer) -> FastMCP:
     def _task_mutation_call(task_id: str, fn, *args) -> str:
         denied = _task_mutation_denial(server, task_id)
         if denied is not None:
+            # A refusal is the security-relevant half of the story; record it
+            # here because the denial returns before _task_call is ever reached.
+            _record_task_call(fn, (task_id, *args))
             return _scrub_server(server, denied)
         return _task_call(fn, task_id, *args)
 
     async def _task_call_async(fn, *args) -> str:
+        _record_task_call(fn, args)
         try:
             return _scrub_server(server, await fn(server, *args))
         except _EXPECTED_ERRORS as exc:
@@ -718,6 +756,7 @@ def build_mcp(config: Config, server: HarnessServer) -> FastMCP:
     async def _task_mutation_call_async(task_id: str, fn, *args) -> str:
         denied = _task_mutation_denial(server, task_id)
         if denied is not None:
+            _record_task_call(fn, (task_id, *args))
             return _scrub_server(server, denied)
         return await _task_call_async(fn, task_id, *args)
 

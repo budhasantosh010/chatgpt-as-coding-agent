@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 from .config import Config
 from .policy import PermissionPolicy
@@ -136,9 +137,16 @@ class HarnessServer:
         # replayable ring buffer. Registered first so every call is seen even if
         # a later pre-hook vetoes it.
         self.events = EventBus(config.event_sink, config.event_token)
-        self.hooks.on_pre(make_event_hook(self.events))
+        # The two RECORDING hooks are kept addressable so the task-lifecycle
+        # tools can be recorded too. Those tools (begin_cycle, advance_task,
+        # task_status, ...) are server-scoped: they never bind a workspace, so
+        # they never travel the capability pipeline and were invisible to
+        # audit.jsonl and to the live feed. See record_tool_call below.
+        self._recording_hooks = [make_event_hook(self.events)]
         if config.audit_log:
-            self.hooks.on_pre(make_audit_hook(config.state_dir / "audit.jsonl"))
+            self._recording_hooks.append(make_audit_hook(config.state_dir / "audit.jsonl"))
+        for hook in self._recording_hooks:
+            self.hooks.on_pre(hook)
         if config.auto_checkpoint:
             self.hooks.on_pre(make_autocheckpoint_hook(config.auto_checkpoint_interval))
         if config.user_hooks:
@@ -157,6 +165,35 @@ class HarnessServer:
         if config.scrub_output:
             self.hooks.on_post(make_scrub_hook())
         self._sessions: dict[str, HarnessContext] = {}
+
+    def record_tool_call(self, tool: str, task_id: str | None = None, args: tuple = ()) -> None:
+        """Record a tool call that does not flow through the capability pipeline.
+
+        Task-lifecycle tools are server-scoped — no workspace, no capability, so
+        nothing in `HarnessContext.call` ever sees them. Without this they left
+        no durable trace at all, which quietly broke the promise that audit.jsonl
+        is the record of everything ChatGPT did: an operator reconciling a
+        transcript would find `begin_cycle` and `finish_task` simply absent.
+
+        Only the RECORDING hooks run. The rest of the pre-chain is
+        capability-shaped — auto-checkpoint fires on WRITE/EXECUTE, the user
+        veto hook is a permission boundary — and firing them with capability
+        None would either no-op noisily or invent a boundary that the lifecycle
+        tools have never had. Recording must never break a tool call, so every
+        hook is individually guarded.
+        """
+        from .hooks import ToolCall
+
+        call = ToolCall(
+            tool=tool, capability=None,
+            session_key=f"task:{task_id}" if task_id else "server",
+            args=args, context=SimpleNamespace(task_id=task_id, policy=None),
+        )
+        for hook in self._recording_hooks:
+            try:
+                hook(call)  # both recording hooks are sync by construction
+            except Exception:  # noqa: BLE001 - recording is never a failure path
+                pass
 
     def session_for(self, key: str | None) -> HarnessContext:
         key = key or "default"
