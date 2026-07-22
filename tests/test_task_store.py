@@ -96,8 +96,13 @@ def test_migrations_are_idempotent(tmp_path):
     db = tmp_path / "tasks.db"
     TaskStore(db).close()
     s2 = TaskStore(db)  # reopening must not re-run migrations or error
+    from harness.tasks.store import _MIGRATIONS
+
     row = s2._db.execute("SELECT MAX(version) AS v FROM schema_version").fetchone()
-    assert row["v"] == 7
+    # Compare against the migration list itself: what this test cares about is
+    # that reopening applies everything exactly once, not what today's version
+    # number happens to be.
+    assert row["v"] == max(version for version, _ in _MIGRATIONS)
     s2.close()
 
 

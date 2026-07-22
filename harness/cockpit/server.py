@@ -122,7 +122,7 @@ def build_cockpit_app(cockpit: Cockpit) -> Starlette:
             "acceptance_criteria": t.acceptance_criteria,
             "criteria_v2": t.criteria_v2,
             "pinned_files": t.pinned_files, "chat_url": t.chat_url,
-            "pinned": t.pinned, "archived": t.archived,
+            "pinned": t.pinned, "archived": t.archived, "unread": t.unread,
             "contract_id": t.contract_id,
             "parent_id": t.parent_id, "created": t.created, "updated": t.updated,
         }
@@ -436,6 +436,55 @@ def build_cockpit_app(cockpit: Cockpit) -> Starlette:
             return _err("unknown project", 404)
         return JSONResponse({"ok": True})
 
+    async def api_set_project_archived(request):
+        if (g := guard(request)):
+            return g
+        body = await _json(request)
+        archived = body.get("archived")
+        if not isinstance(archived, bool):
+            return _err("archived must be a boolean")
+        if not cockpit.store.set_project_archived(body.get("project_id", ""), archived):
+            return _err("unknown project", 404)
+        return JSONResponse({"ok": True})
+
+    async def api_rename_project(request):
+        if (g := guard(request)):
+            return g
+        body = await _json(request)
+        name = str(body.get("name", "")).strip()
+        if not name:
+            return _err("name must not be empty")
+        if not cockpit.store.rename_project(body.get("project_id", ""), name):
+            return _err("unknown project", 404)
+        return JSONResponse({"ok": True})
+
+    async def api_remove_project(request):
+        """Sidebar "Delete" for a project: unregister, never erase.
+
+        The folder on disk is untouched and so are the project's sessions,
+        receipts and credit ledgers — adding the same folder again brings the
+        whole thing back. A destructive project delete is not offered anywhere,
+        because one stray click must never be able to burn an audit trail.
+        """
+        if (g := guard(request)):
+            return g
+        body = await _json(request)
+        project_id = body.get("project_id", "")
+        project = cockpit.store.get_project(project_id)
+        if project is None:
+            return _err("unknown project", 404)
+        running = [
+            task for task in cockpit.store.list_tasks(project_id=project_id)
+            if task.status.value in _RUNNING_STATES
+        ]
+        if running:
+            return _err(
+                f"{len(running)} session(s) here are still running — "
+                "stop or finish them first", 409,
+            )
+        cockpit.store.set_project_unregistered(project_id, True)
+        return JSONResponse({"ok": True, "path": project["path"]})
+
     async def api_set_task_pinned(request):
         if (g := guard(request)):
             return g
@@ -445,6 +494,41 @@ def build_cockpit_app(cockpit: Cockpit) -> Starlette:
             return _err("pinned must be a boolean")
         if not cockpit.store.set_task_pinned(body.get("task_id", ""), pinned):
             return _err("unknown task", 404)
+        return JSONResponse({"ok": True})
+
+    async def api_set_task_unread(request):
+        if (g := guard(request)):
+            return g
+        body = await _json(request)
+        unread = body.get("unread")
+        if not isinstance(unread, bool):
+            return _err("unread must be a boolean")
+        if not cockpit.store.set_task_unread(body.get("task_id", ""), unread):
+            return _err("unknown task", 404)
+        return JSONResponse({"ok": True})
+
+    async def api_rename_task(request):
+        if (g := guard(request)):
+            return g
+        body = await _json(request)
+        title = str(body.get("title", "")).strip()
+        if not title:
+            return _err("title must not be empty")
+        if not cockpit.store.rename_task(body.get("task_id", ""), title):
+            return _err("unknown task", 404)
+        return JSONResponse({"ok": True})
+
+    async def api_move_task(request):
+        if (g := guard(request)):
+            return g
+        body = await _json(request)
+        problem = cockpit.store.move_task_to_project(
+            body.get("task_id", ""), body.get("project_id", "")
+        )
+        if problem:
+            # 404 for "does not exist", 409 for "exists but must not move".
+            missing = problem.endswith("not found")
+            return _err(problem, 404 if missing else 409)
         return JSONResponse({"ok": True})
 
     async def api_set_task_archived(request):
@@ -671,7 +755,13 @@ def build_cockpit_app(cockpit: Cockpit) -> Starlette:
         Route("/api/project/create", api_create_project, methods=["POST"]),
         Route("/api/task/mode", api_set_mode, methods=["POST"]),
         Route("/api/project/pinned", api_set_project_pinned, methods=["POST"]),
+        Route("/api/project/archived", api_set_project_archived, methods=["POST"]),
+        Route("/api/project/rename", api_rename_project, methods=["POST"]),
+        Route("/api/project/remove", api_remove_project, methods=["POST"]),
         Route("/api/task/pinned", api_set_task_pinned, methods=["POST"]),
+        Route("/api/task/unread", api_set_task_unread, methods=["POST"]),
+        Route("/api/task/rename", api_rename_task, methods=["POST"]),
+        Route("/api/task/move", api_move_task, methods=["POST"]),
         Route("/api/task/archived", api_set_task_archived, methods=["POST"]),
         Route("/api/task/delete", api_delete_task, methods=["POST"]),
         Route(

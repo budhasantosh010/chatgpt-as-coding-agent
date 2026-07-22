@@ -84,6 +84,9 @@ class Task(BaseModel):
     # Archived sessions stay fully intact (audit trail, contract, receipts) and
     # simply drop out of the default sidebar. Reversible; deletion is not.
     archived: bool = False
+    # Operator-owned "come back to this" marker. Deliberately manual: the harness
+    # will not decide on its own what the operator has and has not read.
+    unread: bool = False
     # Explicit family-wide link to the immutable Run Contract. Empty keeps the
     # pre-four-controls behavior.
     contract_id: str = ""

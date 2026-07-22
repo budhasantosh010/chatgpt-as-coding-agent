@@ -100,6 +100,16 @@ _MIGRATIONS: list[tuple[int, list[str]]] = [
     (7, [
         "ALTER TABLE loop_passes ADD COLUMN proposed_outcome TEXT NOT NULL DEFAULT ''",
     ]),
+    # v8: projects gain the same two navigation states sessions already had.
+    # `archived` tidies a project out of the default sidebar. `unregistered` is
+    # what the sidebar calls Delete: the row, its tasks, receipts and ledgers all
+    # survive untouched and re-adding the same PATH brings them back, because
+    # register_project matches on path and clears this flag. Nothing here ever
+    # touches the folder on disk.
+    (8, [
+        "ALTER TABLE projects ADD COLUMN archived INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE projects ADD COLUMN unregistered INTEGER NOT NULL DEFAULT 0",
+    ]),
 ]
 
 
@@ -146,6 +156,14 @@ class TaskStore:
         with self._lock:
             existing = self._db.execute("SELECT id FROM projects WHERE path=?", (str(path),)).fetchone()
             if existing:
+                # Re-adding a folder is the documented way back from Delete, so
+                # it must clear the flag rather than hand back a row that stays
+                # invisible. Archived is left alone: that state was a filing
+                # decision about a project the operator never removed.
+                self._db.execute(
+                    "UPDATE projects SET unregistered=0 WHERE id=?", (existing["id"],)
+                )
+                self._db.commit()
                 return existing["id"]
             pid = _sid("P")
             self._db.execute(
@@ -161,23 +179,57 @@ class TaskStore:
             if not r:
                 return None
             project = dict(r)
-            project["pinned"] = bool(project.get("pinned"))
+            for flag in ("pinned", "archived", "unregistered"):
+                project[flag] = bool(project.get(flag))
             return project
 
-    def list_projects(self) -> list[dict]:
+    def list_projects(self, *, include_unregistered: bool = False) -> list[dict]:
+        """Projects for the sidebar. Removed ones are filtered out here rather
+        than deleted, so their tasks and receipts keep a valid parent row."""
+        sql = ("SELECT id, path, name, created, pinned, archived, unregistered "
+               "FROM projects")
+        if not include_unregistered:
+            sql += " WHERE unregistered=0"
         with self._lock:
-            rows = self._db.execute(
-                "SELECT id, path, name, created, pinned FROM projects ORDER BY created"
-            ).fetchall()
+            rows = self._db.execute(sql + " ORDER BY created").fetchall()
         projects = [dict(row) for row in rows]
         for project in projects:
-            project["pinned"] = bool(project["pinned"])
+            for flag in ("pinned", "archived", "unregistered"):
+                project[flag] = bool(project[flag])
         return projects
 
     def set_project_pinned(self, project_id: str, pinned: bool) -> bool:
+        return self._set_project_flag(project_id, "pinned", pinned)
+
+    def set_project_archived(self, project_id: str, archived: bool) -> bool:
+        return self._set_project_flag(project_id, "archived", archived)
+
+    def set_project_unregistered(self, project_id: str, unregistered: bool) -> bool:
+        """What the sidebar calls Delete. Deliberately not a DELETE statement:
+        every task row carries this project_id, and orphaning them would strand
+        receipts and credit ledgers behind a foreign key that no longer resolves."""
+        return self._set_project_flag(project_id, "unregistered", unregistered)
+
+    def _set_project_flag(self, project_id: str, column: str, value: bool) -> bool:
+        # column is chosen from the fixed set above, never from request data.
         with self._lock:
             cur = self._db.execute(
-                "UPDATE projects SET pinned=? WHERE id=?", (int(bool(pinned)), project_id)
+                f"UPDATE projects SET {column}=? WHERE id=?",  # noqa: S608
+                (int(bool(value)), project_id),
+            )
+            self._db.commit()
+            return cur.rowcount > 0
+
+    def rename_project(self, project_id: str, name: str) -> bool:
+        """Rename the project's LABEL. The folder on disk keeps its own name —
+        renaming a directory out from under running worktrees and pinned paths
+        is a different, far riskier operation than relabelling a sidebar row."""
+        label = name.strip()
+        if not label:
+            return False
+        with self._lock:
+            cur = self._db.execute(
+                "UPDATE projects SET name=? WHERE id=?", (label[:120], project_id)
             )
             self._db.commit()
             return cur.rowcount > 0
@@ -412,6 +464,69 @@ class TaskStore:
         return self.mutate_task(
             task_id, lambda task: setattr(task, "archived", bool(archived))
         ) is not None
+
+    def set_task_unread(self, task_id: str, unread: bool) -> bool:
+        return self.mutate_task(
+            task_id, lambda task: setattr(task, "unread", bool(unread))
+        ) is not None
+
+    def rename_task(self, task_id: str, title: str) -> bool:
+        """Retitle a session. The GOAL is left alone on purpose: it is contract
+        input that ChatGPT reads and the receipts refer back to, so it is not
+        the operator's to edit from a sidebar menu."""
+        label = title.strip()
+        if not label:
+            return False
+        return self.mutate_task(
+            task_id, lambda task: setattr(task, "title", label[:200])
+        ) is not None
+
+    def task_has_recorded_work(self, task_id: str) -> bool:
+        """Has anything happened here that is tied to a specific folder?
+
+        Moving a session rebinds its workspace, so this is the line between
+        "created in the wrong place" and "rewriting where finished work lives".
+        """
+        task = self.get_task(task_id)
+        if task is None:
+            return False
+        if (task.changed_files or task.commands or task.test_results
+                or task.checkpoints or task.worktree_path):
+            return True
+        with self._lock:
+            row = self._db.execute(
+                "SELECT 1 FROM events WHERE task_id=? AND type IN "
+                "('obs_exec','obs_write','obs_read','effort_credit_spent') LIMIT 1",
+                (task_id,),
+            ).fetchone()
+        return row is not None
+
+    def move_task_to_project(self, task_id: str, project_id: str) -> str:
+        """Refile a session under another project, rebinding its workspace.
+
+        Returns "" on success or a human-readable refusal. Refuses once the
+        session has done real work: its diffs, executions and receipts all point
+        at the old folder, and a row filed under a project whose files it never
+        touched is a lie the sidebar would tell every time you looked at it.
+        Fork is the honest way to continue that work somewhere else.
+        """
+        task = self.get_task(task_id)
+        if task is None:
+            return "session not found"
+        project = self.get_project(project_id)
+        if project is None:
+            return "target project not found"
+        if project["id"] == task.project_id:
+            return "session is already in that project"
+        if self.task_has_recorded_work(task_id):
+            return ("this session has already run commands or changed files in its "
+                    "current folder — fork it into the other project instead")
+
+        def apply(item):
+            item.project_id = project["id"]
+            item.workspace_path = project["path"]
+
+        return "" if self.mutate_task(task_id, apply) is not None else "move failed"
 
     def delete_task(self, task_id: str) -> bool:
         """Permanently erase one task and everything hanging off it.

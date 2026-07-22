@@ -1,14 +1,14 @@
-import { getJSON, postJSON } from "./api.mjs?v=26";
-import { initResizableLayout } from "./layout.mjs?v=26";
-import { mountRenderer } from "./render.mjs?v=26";
-import { createStore } from "./state.mjs?v=26";
+import { getJSON, postJSON } from "./api.mjs?v=27";
+import { initResizableLayout } from "./layout.mjs?v=27";
+import { mountRenderer } from "./render.mjs?v=27";
+import { createStore } from "./state.mjs?v=27";
 import {
   EFFORT_LABELS, ULTRA_CUSTOM_MAX, LOOPS_CUSTOM_MAX,
   boundedCount, contractEstimate,
-} from "./contract-options.mjs?v=26";
+} from "./contract-options.mjs?v=27";
 import {
   settleContractMotion, playContractMotion, refreshCustomCounts, playLaunch,
-} from "./contract-motion.mjs?v=26";
+} from "./contract-motion.mjs?v=27";
 
 const store = createStore();
 const loadingEvents = new Set();
@@ -135,6 +135,57 @@ const actions = {
     const id = taskId || currentTask()?.id; if (!id) return;
     try { await postJSON("/api/task/fork", { task_id: id }); toast("Session forked"); await refresh(); }
     catch (error) { toast(error.message, true); }
+  },
+  async markUnread(taskId, unread) {
+    try {
+      await postJSON("/api/task/unread", { task_id: taskId, unread });
+      await refresh();
+    } catch (error) { toast(error.message, true); }
+  },
+  async renameTask(taskId, current) {
+    const title = window.prompt("Rename session", current || "");
+    if (title === null || !title.trim()) return;   // Cancel, or an empty name
+    try {
+      await postJSON("/api/task/rename", { task_id: taskId, title: title.trim() });
+      await refresh();
+    } catch (error) { toast(error.message, true); }
+  },
+  async moveTask(taskId, projectId) {
+    try {
+      await postJSON("/api/task/move", { task_id: taskId, project_id: projectId });
+      toast("Session moved");
+      await refresh();
+    } catch (error) {
+      // The refusal explains itself ("fork it instead"), so show it as-is
+      // rather than a generic failure the operator has to decode.
+      toast(error.message, true);
+    }
+  },
+  async renameProject(projectId, current) {
+    const name = window.prompt("Rename project\n\nThis renames the label in the sidebar. The folder on disk keeps its own name.", current || "");
+    if (name === null || !name.trim()) return;
+    try {
+      await postJSON("/api/project/rename", { project_id: projectId, name: name.trim() });
+      await refresh();
+    } catch (error) { toast(error.message, true); }
+  },
+  async archiveProject(projectId, archived) {
+    try {
+      await postJSON("/api/project/archived", { project_id: projectId, archived });
+      toast(archived ? "Project archived" : "Project restored");
+      await refresh();
+    } catch (error) { toast(error.message, true); }
+  },
+  async removeProject(projectId, label) {
+    // Not a delete. Say so plainly, including how to undo it — an operator who
+    // believes this erased their receipts will not click it when they should.
+    const name = (label || projectId).slice(0, 60);
+    if (!window.confirm(`Remove "${name}" from the Workbench?\n\nIts sessions, receipts and credit ledgers are kept, and the folder on disk is untouched. Add the same folder again to bring it back.`)) return;
+    try {
+      await postJSON("/api/project/remove", { project_id: projectId });
+      toast("Project removed from the Workbench");
+      await refresh();
+    } catch (error) { toast(error.message, true); }
   },
   async archiveTask(taskId, archived) {
     try {

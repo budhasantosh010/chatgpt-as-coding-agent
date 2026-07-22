@@ -87,7 +87,7 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 .folder-icon { width:14px; height:10px; display:inline-block; border:1.3px solid var(--muted); border-radius:2px; position:relative; flex:none; }
 .folder-icon::before { content:""; position:absolute; width:6px; height:3px; top:-4px; left:1px; border:1.3px solid var(--muted); border-bottom:0; border-radius:2px 2px 0 0; }
 .project-group { margin:1px 0 4px; }
-.project-row { display:grid; grid-template-columns:20px minmax(0,1fr) 30px; align-items:center; height:31px; border-radius:7px; }
+.project-row { display:grid; grid-template-columns:20px minmax(0,1fr) 30px 24px; align-items:center; height:31px; border-radius:7px; }
 .project-row:hover,.project-row.current { background:var(--hover); }
 .disclosure { color:var(--faint); font:11px var(--mono); }
 .project-select { min-width:0; display:flex; align-items:center; gap:8px; height:100%; text-align:left; }
@@ -97,7 +97,7 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 .pin-button.is-pinned { color:var(--blue); font-weight:700; }
 .session-list { margin-left:20px; }
 .project-group.collapsed .session-list { display:none; }
-.session-row { display:grid; grid-template-columns:minmax(0,1fr) 30px; align-items:center; min-height:29px; border-radius:7px; color:var(--muted); }
+.session-row { display:grid; grid-template-columns:minmax(0,1fr) 30px 24px; align-items:center; min-height:29px; border-radius:7px; color:var(--muted); }
 .session-row:hover,.session-row.selected { background:var(--selected); color:var(--ink); }
 .session-select { min-width:0; display:flex; align-items:center; gap:7px; height:29px; padding:0 5px 0 8px; text-align:left; color:inherit; }
 .empty-session { padding:4px 8px; color:var(--faint); font-size:12px; }
@@ -371,7 +371,7 @@ dialog h2 { margin:0; font-size:18px; }.dialog-subtitle { margin:3px 0 17px; col
 .contract-hint { margin:12px 1px 0; color:var(--faint); font-size:11px; }
 .contract-hint code { font:10.5px var(--mono); color:var(--muted); }
 
-/* ---- session row menu (archive / delete) --------------------------------- */
+/* ---- row menus (sessions AND projects) ----------------------------------- */
 .row-menu-button {
   border: 0; background: none; color: var(--muted); cursor: pointer;
   padding: 0 6px; border-radius: 6px; font-size: 14px; line-height: 1;
@@ -379,10 +379,20 @@ dialog h2 { margin:0; font-size:18px; }.dialog-subtitle { margin:3px 0 17px; col
 }
 .session-row:hover .row-menu-button,
 .session-row.selected .row-menu-button,
+.project-row:hover .row-menu-button,
+.project-row.current .row-menu-button,
 .row-menu-button:focus-visible { opacity: 1; }
 .row-menu-button:hover { background: var(--hover); color: var(--text); }
-.session-row.is-archived .row-label { opacity: .55; }
+.session-row.is-archived .row-label,
+.project-row.is-archived .project-select { opacity: .55; }
 .session-row.is-archived .row-time { font-style: italic; opacity: .7; }
+
+/* Unread is an operator bookmark, so it reads as emphasis rather than alarm:
+   the label goes solid and a dot sits in the gutter the pin already occupies. */
+.session-row.is-unread .row-label { color: var(--ink); font-weight: 600; }
+.session-row.is-unread .status-dot {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 22%, transparent);
+}
 .archive-toggle { display: block; width: 100%; margin: 6px 0 2px; text-align: left; }
 
 .row-menu {
@@ -399,3 +409,4 @@ dialog h2 { margin:0; font-size:18px; }.dialog-subtitle { margin:3px 0 17px; col
 .row-menu button:hover, .row-menu button:focus-visible { background: var(--hover); outline: none; }
 .row-menu button.danger { color: var(--danger, #c0392b); }
 .row-menu button.danger:hover { background: var(--danger-soft, rgba(192, 57, 43, .12)); }
+.row-menu-separator { height: 1px; margin: 4px 6px; background: var(--line); }
