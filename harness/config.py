@@ -129,6 +129,10 @@ class Config:
     scrub_output: bool = True
     # Append every tool call to state_dir/audit.jsonl (what ChatGPT did, when).
     audit_log: bool = True
+    # Append every JSON-RPC method the connector asks for to
+    # state_dir/connector.jsonl. Answers "did ChatGPT ever re-read my tool
+    # list?" — invisible otherwise, since access logging is off by design.
+    connector_log: bool = True
     # Auto-snapshot the workspace before edits (debounced) so there's always a
     # restore point even if the model forgets to checkpoint.
     auto_checkpoint: bool = True

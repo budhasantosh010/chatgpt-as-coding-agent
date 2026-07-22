@@ -63,7 +63,60 @@ class SecurityMiddleware:
             await self._reject(send, 429, "rate limit exceeded")
             return
 
+        if self.config.connector_log and scope.get("method") == "POST":
+            receive = await self._logging_receive(receive, headers, ip)
+
         await self.app(scope, receive, send)
+
+    async def _logging_receive(self, receive, headers: dict, ip: str):
+        """Record which JSON-RPC method the client asked for, then replay the
+        body untouched.
+
+        This exists to answer one question no amount of local testing can:
+        does the connector ever RE-READ our tool list? A client that never
+        sends `tools/list` again is serving a cached menu, and no change to the
+        tools on this machine can reach it. Without this log that distinction
+        is pure guesswork.
+
+        Only the first body chunk is parsed — enough for JSON-RPC, whose method
+        is at the top of the object — and a chunked or unparseable body is
+        skipped rather than risking the request.
+        """
+        first = await receive()
+        try:
+            payload = json.loads(first.get("body", b"") or b"{}")
+            method = payload.get("method")
+        except (ValueError, AttributeError):
+            method = None
+        if method:
+            self._log_connector(method, headers, ip)
+        replayed = False
+
+        async def wrapped():
+            nonlocal replayed
+            if not replayed:
+                replayed = True
+                return first
+            return await receive()
+
+        return wrapped
+
+    def _log_connector(self, method: str, headers: dict, ip: str) -> None:
+        record = {
+            "time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "method": method,
+            "ip": ip,
+            # The user agent is how we tell OpenAI's fetch apart from our own
+            # probes and the Workbench.
+            "agent": headers.get("user-agent", "")[:120],
+        }
+        try:
+            path = self.config.state_dir / "connector.jsonl"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+        except OSError:
+            pass  # observability must never break a request
 
     def _host_allowed(self, host: str) -> bool:
         if host in (h.lower() for h in self.config.allowed_hosts):
