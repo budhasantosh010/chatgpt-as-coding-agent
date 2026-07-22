@@ -60,6 +60,52 @@ Record the date, build/commit, task id, and any defect in the table at the end.
 - Verify no browser console error, server traceback, stuck process, orphaned Git
   probe, or unexplained background CPU remains after the walkthrough.
 
+## A2. Sidebar row actions (projects and sessions)
+
+Every row action, on both row kinds. Run against a throwaway cockpit with a
+temp state dir — several of these are destructive by design.
+
+1. Project: Rename, then confirm the FOLDER on disk still has its old name.
+2. Project: Archive, confirm it leaves the list and the archived counter covers
+   projects and sessions together, then Unarchive from the same menu.
+3. Project: Remove from Workbench. Cancel first and confirm nothing changed.
+   Then confirm, and check the folder, the project's sessions and their receipts
+   all still exist. Add the same folder again: the project must come back with
+   the same id, its custom name, and its sessions still attached.
+4. Session: Rename, and confirm the goal is unchanged.
+5. Session: Mark as unread, confirm the row emphasises and the item flips to
+   Mark as read.
+6. Session: Move to project on a session that has never run — it moves, and its
+   workspace path follows it.
+7. Session: Move to project on a session that HAS run — it must refuse and point
+   at Fork. If it moves, stop: the sidebar is now lying about where work lives.
+8. Regression, because both menus share one implementation: Open, Pin, Fork,
+   Archive and Delete must all still work from the session menu, and Delete must
+   still ask first.
+
+### Acceptance record — 2026-07-23, commit `11281db`
+
+| Check | Result |
+|---|---|
+| Project rename | **Pass.** Sidebar + `/api/state` updated; folder still `Alpha` on disk |
+| Project archive | **Pass.** Leaves list; counter reads "Show 1 archived"; menu offers Unarchive |
+| Combined archived counter | **Pass.** 1 project + 1 session rendered as "Hide 2 archived" |
+| Project remove — cancel | **Pass.** Nothing changed |
+| Project remove — confirm | **Pass.** Row gone; folder, sessions and events all intact |
+| Project remove — restore | **Pass.** Same id `P-7e233f7c…`, custom name kept, session reattached |
+| Session rename | **Pass.** Title changed, goal untouched |
+| Mark as unread | **Pass.** `is-unread` applied, label weight 600, item flipped to Mark as read |
+| Move — fresh session | **Pass.** Alpha → Beta, workspace path followed |
+| Move — worked session | **Pass.** Refused: "…fork it into the other project instead"; row stayed put |
+| Move — submenu contents | **Pass.** Lists only other projects |
+| Regression: Fork / Archive / Delete / Pin / Open | **Pass.** All work through the shared menu; Delete honours Cancel |
+| Browser console | **Pass.** Zero errors across the whole sweep |
+
+Method note: driven through real DOM events against a live cockpit on a temp
+state dir. `window.prompt` and `window.confirm` were stubbed, since a blocking
+dialog cannot be answered by an automated pass; every other step was a genuine
+click through the app's own handlers.
+
 ## E. Before you trust any of it: the connector actually has the tools
 
 ChatGPT caches its tool menu against the connector URL. Deleting and re-adding
