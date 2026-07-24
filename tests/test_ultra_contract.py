@@ -61,14 +61,16 @@ def test_candidate_forks_get_fresh_scopes_and_stop_at_locked_limit(tmp_path):
     assert "CANDIDATE_LIMIT" in refused
 
 
-def test_candidate_fork_requires_ultra_but_plain_fork_stays_legacy(tmp_path):
+def test_candidate_fork_requires_ultra_and_plain_fork_gets_own_scope(tmp_path):
     server, task = _server(tmp_path, candidates=0, effort="low")
 
     assert "NOT_ULTRA" in _fork(server, task.id, candidate=True)
     plain = server.tasks.get_task(_child_id(_fork(server, task.id)))
 
-    assert plain.contract_id == task.contract_id
-    assert plain.credit_scope_id == task.credit_scope_id
+    # A plain fork is an independent attempt: its own contract and its own scope,
+    # so deleting it can never erase the original's credits.
+    assert plain.contract_id and plain.contract_id != task.contract_id
+    assert plain.credit_scope_id and plain.credit_scope_id != task.credit_scope_id
 
 
 def test_candidate_fails_closed_without_isolated_worktree_and_releases_quota(tmp_path):
@@ -110,12 +112,14 @@ def test_ultra_candidate_with_effort_off_has_no_credit_scope(tmp_path):
     assert server.tasks.get_run_contract(candidate.id).ultra_enabled is True
 
 
-def test_plain_fork_under_ultra_shares_root_scope(tmp_path):
+def test_plain_fork_under_ultra_gets_its_own_scope(tmp_path):
+    # Even under an ULTRA contract, a PLAIN (non-candidate) fork is independent:
+    # it gets its own scope, not the shared root budget the candidates draw on.
     server, task = _server(tmp_path, candidates=2, effort="low")
 
     plain = server.tasks.get_task(_child_id(_fork(server, task.id)))
 
-    assert plain.credit_scope_id == task.credit_scope_id
+    assert plain.credit_scope_id not in {"", task.credit_scope_id}
 
 
 def test_candidate_extension_is_approval_bound_and_raises_locked_limit(tmp_path):

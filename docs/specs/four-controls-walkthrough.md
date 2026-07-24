@@ -106,6 +106,30 @@ state dir. `window.prompt` and `window.confirm` were stubbed, since a blocking
 dialog cannot be answered by an automated pass; every other step was a genuine
 click through the app's own handlers.
 
+### Defect found and fixed — 2026-07-24, real operator flight on `harness test 1`
+
+Forking a task and then deleting the fork **destroyed the original task's credit
+ledger**. `fork_task` copied the parent's `credit_scope_id` into the child, so
+both rows pointed at one scope; `delete_task` deletes credits *by scope id*, so
+deleting the fork ran `DELETE FROM credit_scopes/credits WHERE scope_id=<shared>`
+and took the original's spent credit — and orphaned its receipt `.md` — with it.
+The task was left reading `EFFORT_OFF`.
+
+Why the A2 pass above missed it: those fixtures had no locked effort contract, so
+`delete_task`'s `if task.credit_scope_id:` was false and the destructive DELETE
+never fired. A destructive-UI test MUST run against a task with a locked contract
+and at least one spent credit, or it cannot exercise the ledger-deletion path.
+
+Fix: forks now get their OWN contract and scope (independent budget); subtasks
+keep sharing the parent's on purpose; and `delete_task` will not delete a scope
+any other task still references. Regressions:
+`test_deleting_a_fork_leaves_the_originals_ledger_intact`,
+`test_deleting_a_shared_scope_subtask_keeps_the_parent_ledger`.
+
+Still untested from this flight: the reuse and fabricated-evidence probes both
+returned `mcp_network_error` (connector connection flapping) and never reached
+the server — they must be re-run against a stable connection.
+
 ## E. Before you trust any of it: the connector actually has the tools
 
 ChatGPT caches its tool menu against the connector URL. Deleting and re-adding

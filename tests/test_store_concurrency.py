@@ -211,37 +211,87 @@ def test_ordinary_subtask_points_to_same_contract_and_scope(tmp_path):
     assert store.get_run_contract(child.id).contract_hash == store.get_run_contract(linked.id).contract_hash
 
 
-def test_ordinary_fork_points_to_same_contract_and_scope(tmp_path):
+def _forked_child(server, tmp_path, *, effort_level="medium"):
     workspace = tmp_path / "project"
-    workspace.mkdir()
-    server = HarnessServer(Config(
-        workspace_roots=[tmp_path], state_dir=tmp_path / "state", secret_route="r"
-    ))
+    workspace.mkdir(exist_ok=True)
     project = server.tasks.register_project(str(workspace), "Project")
     parent = server.tasks.create_task(project, str(workspace), goal="original")
     linked = server.tasks.confirm_run_contract(
         parent.id,
         RunContract.confirmed(
-            task_type="build",
-            effort_level="medium",
-            credit_ceiling=8,
-            candidate_count=0,
-            machine_concurrency=2,
-            model_concurrency=1,
-            framework="none",
-            max_loops=0,
+            task_type="build", effort_level=effort_level, credit_ceiling=8,
+            candidate_count=0, machine_concurrency=2, model_concurrency=1,
+            framework="none", max_loops=0,
         ),
     )
-
     output = asyncio.run(task_tools.fork_task(server, linked.id, "second approach"))
     child_id = next(
         token for token in output.split()
         if token.startswith("T-") and token != linked.id
     )
-    child = server.tasks.get_task(child_id)
+    return linked, server.tasks.get_task(child_id)
 
-    assert child.contract_id == linked.contract_id
-    assert child.credit_scope_id == linked.credit_scope_id
-    assert server.tasks.get_run_contract(child.id).contract_hash == (
-        server.tasks.get_run_contract(linked.id).contract_hash
+
+def test_ordinary_fork_gets_its_own_contract_and_scope(tmp_path):
+    # A fork is an independent second attempt: its own run contract and its own
+    # credit scope, so deleting it can never reach into the original's ledger.
+    server = HarnessServer(Config(
+        workspace_roots=[tmp_path], state_dir=tmp_path / "state", secret_route="r"
+    ))
+    linked, child = _forked_child(server, tmp_path)
+
+    assert child.contract_id and child.contract_id != linked.contract_id
+    assert child.credit_scope_id and child.credit_scope_id != linked.credit_scope_id
+    # Same shape, though — the fork inherits the parent's effort settings.
+    fc = server.tasks.get_run_contract(child.id)
+    assert fc.effort_level == "medium" and fc.credit_ceiling == 8
+
+
+def test_deleting_a_fork_leaves_the_originals_ledger_intact(tmp_path):
+    # Regression for the harness-test-1 flight: fork a task with a live scope,
+    # delete the fork, and the ORIGINAL keeps its scope and credits. Before the
+    # fix the fork shared the scope row and this DELETE erased the parent's.
+    server = HarnessServer(Config(
+        workspace_roots=[tmp_path], state_dir=tmp_path / "state", secret_route="r"
+    ))
+    linked, child = _forked_child(server, tmp_path)
+    parent_scope = linked.credit_scope_id
+
+    assert server.tasks.delete_task(child.id) is True
+
+    survived = server.tasks._db.execute(
+        "SELECT 1 FROM credit_scopes WHERE scope_id=?", (parent_scope,)
+    ).fetchone()
+    assert survived is not None
+    assert server.tasks.get_task(linked.id).credit_scope_id == parent_scope
+
+
+def test_deleting_a_shared_scope_subtask_keeps_the_parent_ledger(tmp_path):
+    # Subtasks SHARE the parent's scope on purpose. Deleting a subtask must keep
+    # that shared row alive for the parent — the delete guard's whole job.
+    server = HarnessServer(Config(
+        workspace_roots=[tmp_path], state_dir=tmp_path / "state", secret_route="r"
+    ))
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    project = server.tasks.register_project(str(workspace), "Project")
+    parent = server.tasks.create_task(project, str(workspace), goal="original")
+    linked = server.tasks.confirm_run_contract(
+        parent.id,
+        RunContract.confirmed(
+            task_type="build", effort_level="medium", credit_ceiling=8,
+            candidate_count=0, machine_concurrency=2, model_concurrency=1,
+            framework="none", max_loops=0,
+        ),
     )
+    out = task_tools.create_subtask(server, linked.id, "one slice of the work")
+    sub_id = next(t for t in out.split() if t.startswith("T-") and t != linked.id)
+    sub = server.tasks.get_task(sub_id)
+    assert sub.credit_scope_id == linked.credit_scope_id  # shared, by design
+
+    assert server.tasks.delete_task(sub.id) is True
+
+    survived = server.tasks._db.execute(
+        "SELECT 1 FROM credit_scopes WHERE scope_id=?", (linked.credit_scope_id,)
+    ).fetchone()
+    assert survived is not None

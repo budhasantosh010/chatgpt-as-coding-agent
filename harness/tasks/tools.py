@@ -900,15 +900,38 @@ async def fork_task(
         } for criterion in src.criteria_v2],
         plan=list(src.plan),
         parent_id=src.id,
-        contract_id=src.contract_id,
     )
+    # A fork is an INDEPENDENT second attempt, so it gets its OWN run contract and
+    # OWN credit scope — never a pointer into the parent's. Sharing the scope row
+    # (which this once did) meant deleting a fork ran DELETE ... WHERE scope_id and
+    # took the ORIGINAL task's spent credits and receipts down with it.
+    # Candidates and subtasks are deliberately different: they decompose ONE budget
+    # and share the parent's scope on purpose, which the store's delete guard keeps
+    # safe. See test_ordinary_fork_gets_its_own_contract_and_scope.
+    parent_contract = server.tasks.get_run_contract(src.id)
     try:
         if candidate:
-            child = server.tasks.create_candidate_task(src, **fields)
+            child = server.tasks.create_candidate_task(
+                src, contract_id=src.contract_id, **fields
+            )
+        elif parent_contract is not None:
+            child = server.tasks.create_task_with_contract(
+                src.project_id, src.workspace_path,
+                RunContract.confirmed(
+                    task_type=parent_contract.task_type,
+                    effort_level=parent_contract.effort_level,
+                    credit_ceiling=parent_contract.credit_ceiling,
+                    candidate_count=parent_contract.candidate_count,
+                    machine_concurrency=parent_contract.machine_concurrency,
+                    model_concurrency=parent_contract.model_concurrency,
+                    framework=parent_contract.framework,
+                    max_loops=parent_contract.max_loops,
+                ),
+                **fields,
+            )
         else:
             child = server.tasks.create_task(
-                src.project_id, src.workspace_path,
-                credit_scope_id=src.credit_scope_id, **fields,
+                src.project_id, src.workspace_path, **fields
             )
     except ValueError as exc:
         return f"Error: {exc}"

@@ -394,7 +394,9 @@ class TaskStore:
                 ]
                 for event_id in event_ids:
                     self._db.execute("DELETE FROM events WHERE id=?", (event_id,))
-                if child.credit_scope_id:
+                if child.credit_scope_id and not self._scope_shared_with_other(
+                    child.credit_scope_id, child_task_id
+                ):
                     self._db.execute("DELETE FROM credits WHERE scope_id=?", (child.credit_scope_id,))
                     self._db.execute("DELETE FROM credit_scopes WHERE scope_id=?", (child.credit_scope_id,))
                 self._db.execute("DELETE FROM approvals WHERE task_id=?", (child_task_id,))
@@ -528,6 +530,21 @@ class TaskStore:
 
         return "" if self.mutate_task(task_id, apply) is not None else "move failed"
 
+    def _scope_shared_with_other(self, scope_id: str, exclude_task_id: str) -> bool:
+        """Does any task OTHER than exclude_task_id still point at this scope?
+
+        Callers hold self._lock and are mid-transaction, so this reads on the
+        same connection and never re-acquires the lock. Subtasks share the
+        parent's scope on purpose; this is the check that stops deleting one of
+        them from erasing the ledger the others rely on.
+        """
+        row = self._db.execute(
+            "SELECT 1 FROM tasks WHERE id!=? "
+            "AND json_extract(data,'$.credit_scope_id')=? LIMIT 1",
+            (exclude_task_id, scope_id),
+        ).fetchone()
+        return row is not None
+
     def delete_task(self, task_id: str) -> bool:
         """Permanently erase one task and everything hanging off it.
 
@@ -550,7 +567,13 @@ class TaskStore:
                         "[HAS_CHILDREN] this session has forks or ULTRA candidates "
                         "pointing at it — archive it instead of deleting"
                     )
-                if task.credit_scope_id:
+                if task.credit_scope_id and not self._scope_shared_with_other(
+                    task.credit_scope_id, task_id
+                ):
+                    # Only tear down the ledger if this task is the LAST owner of
+                    # the scope. Subtasks (and any future shared-scope kin) point
+                    # at the same row on purpose; deleting one of them must never
+                    # delete the credits and receipts the others still stand on.
                     self._db.execute("DELETE FROM credits WHERE scope_id=?", (task.credit_scope_id,))
                     self._db.execute("DELETE FROM credit_scopes WHERE scope_id=?", (task.credit_scope_id,))
                 if task.contract_id:
