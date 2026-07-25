@@ -118,6 +118,7 @@ class HarnessServer:
             make_rules_hook,
             make_scrub_hook,
             make_telemetry_hook,
+            make_turn_hook,
         )
         from .observations import make_observation_post_hook, make_observation_pre_hook
         from .processes import ProcessManager
@@ -145,6 +146,9 @@ class HarnessServer:
         self._recording_hooks = [make_event_hook(self.events)]
         if config.audit_log:
             self._recording_hooks.append(make_audit_hook(config.state_dir / "audit.jsonl"))
+        # Turn observation rides the same path for the same reason: a ledger
+        # that only saw half the tools would misreport what a turn actually did.
+        self._recording_hooks.append(make_turn_hook(config.state_dir))
         for hook in self._recording_hooks:
             self.hooks.on_pre(hook)
         if config.auto_checkpoint:

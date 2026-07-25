@@ -91,6 +91,24 @@ class HookManager:
 # ---- built-in hooks --------------------------------------------------------
 
 
+def make_turn_hook(state_dir: Path) -> PreHook:
+    """Pre-hook: note that the server observed a tool call for a task.
+
+    This is what lets a published turn be checked against reality — the model
+    writes the prose, the server writes the call list, and the two sit side by
+    side in the ledger. Registered as a RECORDING hook so it covers both the
+    capability pipeline and the server-scoped lifecycle tools.
+    """
+    from .tasks import turns
+
+    def _turn(call: ToolCall) -> None:
+        task_id = getattr(call.context, "task_id", None)
+        if task_id:
+            turns.observe(state_dir, task_id, call.tool)
+
+    return _turn
+
+
 def make_audit_hook(audit_path: Path) -> PreHook:
     """Pre-hook: append one line per tool call to a single audit log, so there
     is a durable record of everything ChatGPT did on the machine (across all

@@ -831,6 +831,33 @@ def build_mcp(config: Config, server: HarnessServer) -> FastMCP:
         )
 
     @mcp.tool()
+    async def publish_turn(task_id: str, user_request: str, assistant_response: str,
+                           decisions: list | None = None, next_action: str = "",
+                           ctx: Context = None) -> str:
+        """Publish this conversation turn to the task's Turn Ledger, so a NEW
+        chat can resume where this one stopped.
+
+        Call it once after finishing a stretch of coding work, before starting
+        the next. `user_request` is what the operator asked (their words, as
+        faithfully as you can), `assistant_response` is the answer you are
+        giving them, `next_action` is what should happen next.
+
+        This is model-published context, NOT evidence: it can never satisfy an
+        acceptance criterion or spend a credit. The server records the tool
+        calls it actually saw alongside your account of them."""
+        return _task_mutation_call(
+            task_id, tasktools.publish_turn, user_request, assistant_response,
+            decisions, next_action,
+        )
+
+    @mcp.tool()
+    async def discard_turn(task_id: str, reason: str, ctx: Context = None) -> str:
+        """Drop the open (unpublished) turn without publishing it, stating why.
+        Use only when publish_turn cannot succeed — the gap is written to the
+        ledger so the hole is visible rather than silent."""
+        return _task_mutation_call(task_id, tasktools.discard_turn, reason)
+
+    @mcp.tool()
     async def begin_cycle(task_id: str, question: str, purpose: str = "",
                           verification_plan: str = "", ctx: Context = None) -> str:
         """Open one auditable EFFORT cycle under the task's shared credit scope."""

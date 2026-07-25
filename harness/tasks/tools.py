@@ -18,6 +18,7 @@ from ..observations import tree_hash
 from ..policy import VALID_MODES, check_ceiling
 from ..security import SecurityError, is_within
 from ..session import _now_iso
+from . import turns
 from .effort import receipt_fingerprint, write_receipt_view
 from .contracts import RunContract
 from .model import TaskState, can_transition
@@ -315,11 +316,43 @@ def task_status(server, task_id: str) -> str:
     return "\n".join(lines)
 
 
+def _render_turns(server, task_id: str, limit: int = 4) -> list[str]:
+    """The published turn ledger, labelled so a reader cannot mistake it for
+    the observed record. Recency order, oldest first, so it reads as a chat."""
+    rows = turns.recent(server.config.state_dir, task_id, limit)
+    pending = turns.unpublished_work(server.config.state_dir, task_id)
+    if not rows and not pending:
+        return []
+    lines = [
+        "",
+        "**Turn ledger** — model-published, NOT an observed transcript. Turns "
+        "that called no harness tool are absent by construction. Never evidence.",
+    ]
+    for row in rows:
+        if row.get("discarded"):
+            lines.append(f"  [{row['turn_id']}] discarded: {row['discard_reason']}")
+            continue
+        lines += [
+            f"  [{row['turn_id']}] you: {row['user_request']['text']}",
+            f"      chatgpt: {row['assistant_response']['text']}",
+        ]
+        if row.get("next_action"):
+            lines.append(f"      next: {row['next_action']}")
+    if rows and (last := rows[-1]).get("next_action"):
+        lines += ["", f"**Pick up here:** {last['next_action']}"]
+    if pending:
+        lines.append(
+            f"  ⚠ {pending} tool calls since the last publish are still "
+            f"unpublished — call publish_turn to close that turn."
+        )
+    return lines
+
+
 def resume_task(server, task_id: str) -> str:
     task = _get(server, task_id)
     return (
         f"Resuming task {task.id} ({task.status.value}).\n"
-        + "\n".join(_render_task(server, task))
+        + "\n".join(_render_task(server, task) + _render_turns(server, task.id))
         + f"\n\nContinue by passing task_id=\"{task_id}\" to your tool calls."
     )
 
@@ -499,9 +532,70 @@ def record_framework_routing(
     return f"Framework routing recorded ({len(used)} activated, {len(omitted)} skipped)."
 
 
+def publish_turn(
+    server, task_id: str, user_request: str, assistant_response: str,
+    decisions: list | None = None, next_action: str = "",
+) -> str:
+    task = _get(server, task_id)
+    if (error := _terminal_error(task)):
+        return error
+    try:
+        record = turns.publish(
+            server.config.state_dir, task_id,
+            user_request=user_request, assistant_response=assistant_response,
+            decisions=decisions, next_action=next_action,
+        )
+    except ValueError as exc:
+        return f"Error: {exc}"
+    server.tasks.add_event(
+        task_id, "turn_published", turn_id=record["turn_id"],
+        observed_calls=record["observed"]["count"],
+    )
+    return (
+        f"Turn {record['turn_id']} published ({record['observed']['count']} tool "
+        f"calls observed). Stored as model-published — it is not evidence and "
+        f"cannot satisfy an acceptance gate."
+    )
+
+
+def discard_turn(server, task_id: str, reason: str) -> str:
+    _get(server, task_id)
+    if not reason.strip():
+        return "Error: [REASON_REQUIRED] say why the turn is being dropped"
+    record = turns.discard(server.config.state_dir, task_id, reason.strip())
+    if record is None:
+        return "Error: [NO_OPEN_TURN] there is no unpublished turn to discard"
+    server.tasks.add_event(
+        task_id, "turn_discarded", turn_id=record["turn_id"], reason=reason.strip()
+    )
+    return (
+        f"Turn {record['turn_id']} discarded without publishing. The gap is "
+        f"recorded in the ledger."
+    )
+
+
+def _unpublished_turn_error(server, task_id: str, action: str) -> str | None:
+    """Refuse `action` while a completed cycle sits unpublished.
+
+    Deliberately NOT fired on ordinary tool calls. The server cannot see turn
+    boundaries — a turn boundary is a user message, which never reaches the
+    harness — so gating "the next coding action" would break read_file →
+    begin_cycle inside one honest turn. A completed cycle is the earliest
+    boundary the server can actually prove.
+    """
+    if not turns.crossed_a_turn_boundary(server.config.state_dir, task_id):
+        return None
+    return (
+        f"Error: [TURN_UNPUBLISHED] a completed cycle has not been published. "
+        f"Call publish_turn (or discard_turn with a reason) before {action}."
+    )
+
+
 def begin_cycle(
     server, task_id: str, question: str, purpose: str = "", verification_plan: str = ""
 ) -> str:
+    if (blocked := _unpublished_turn_error(server, task_id, "opening another cycle")):
+        return blocked
     try:
         cycle = server.tasks.begin_cycle(task_id, question, purpose, verification_plan)
     except ValueError as exc:
@@ -821,6 +915,16 @@ def advance_task(server, task_id: str, to_state: str) -> str:
 
 def finish_task(server, task_id: str, result: str = "", evidence: str = "") -> str:
     task = _get(server, task_id)
+    # Stricter than begin_cycle's gate: ANY unpublished work blocks completion.
+    # There is no legitimate reading of "this task is done" that leaves the last
+    # stretch of work unrecorded, and unlike mid-run there is no turn left to
+    # falsely interrupt.
+    if (pending := turns.unpublished_work(server.config.state_dir, task_id)):
+        return (
+            f"Error: [TURN_UNPUBLISHED] {pending} observed tool calls have not "
+            f"been published. Call publish_turn (or discard_turn with a reason) "
+            f"before finishing."
+        )
     if not can_transition(task.status, TaskState.COMPLETED):
         return (
             f"Task is {task.status.value}; move it to review_ready before completing "

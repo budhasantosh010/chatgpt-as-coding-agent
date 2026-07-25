@@ -327,6 +327,8 @@ the matching, deliberately separate skills when a row is enabled:
 - [harness-effort](docs/skills/harness-effort.md) for credit cycles and receipts.
 - [harness-ultra](docs/skills/harness-ultra.md) for candidate orchestration only.
 - [harness-loops](docs/skills/harness-loops.md) for bounded refinement passes.
+- [harness-turns](docs/skills/harness-turns.md) to publish each turn so a new
+  chat can resume the task — model-published context, never evidence.
 
 Also raise **ChatGPT's own model/effort picker** for hard tasks. That is the real
 model-compute control; the harness controls procedure, limits, evidence, and audit.
