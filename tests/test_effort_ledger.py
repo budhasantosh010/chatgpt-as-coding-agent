@@ -206,6 +206,85 @@ def test_machine_execution_must_exactly_match_verification_plan(tmp_path):
     assert "EVIDENCE_INVALID" in output
 
 
+def test_prose_verification_plan_does_not_reject_a_real_test_run(tmp_path):
+    # The plan is free text written for a human. Before this, every line was
+    # treated as a pre-registered command string, so a plan that read like a
+    # sentence rejected the very run it described.
+    server, task = _server(tmp_path)
+    cycle = _cycle_id(task_tools.begin_cycle(
+        server, task.id, "does subtract work?",
+        verification_plan="Run pytest and confirm the whole suite is green.",
+    ))
+    server.tasks.add_event(
+        task.id, "obs_exec", exec_id="px-real", command="python -m pytest -q",
+        exit_code=0, tree_hash="tree", fingerprint="fp-real",
+    )
+
+    output = task_tools.complete_cycle(
+        server, task.id, cycle, "4 passed", "continue",
+        [{"kind": "execution", "exec_id": "px-real"}],
+    )
+
+    assert "machine tier" in output
+
+
+def test_absent_verification_plan_does_not_reject_a_real_test_run(tmp_path):
+    # The harsher case: verification_plan defaults to "" and "".splitlines() is
+    # [] — not None — so the old guard produced an EMPTY pre-registered set and
+    # refused every possible execution.
+    server, task = _server(tmp_path)
+    cycle = _cycle_id(task_tools.begin_cycle(server, task.id, "does it pass?"))
+    server.tasks.add_event(
+        task.id, "obs_exec", exec_id="px-noplan", command="python -m pytest -q",
+        exit_code=0, tree_hash="tree", fingerprint="fp-noplan",
+    )
+
+    output = task_tools.complete_cycle(
+        server, task.id, cycle, "4 passed", "continue",
+        [{"kind": "execution", "exec_id": "px-noplan"}],
+    )
+
+    assert "machine tier" in output
+
+
+def test_a_command_shaped_plan_line_still_pins_the_command(tmp_path):
+    # Prose relaxes the check; a real command in the plan must still bind, or
+    # pre-registration would mean nothing.
+    server, task = _server(tmp_path)
+    cycle = _cycle_id(task_tools.begin_cycle(
+        server, task.id, "verify",
+        verification_plan="First look at the diff.\npytest -q\nThen report back.",
+    ))
+    server.tasks.add_event(
+        task.id, "obs_exec", exec_id="px-wrong", command="pytest tests/unit -q",
+        exit_code=0, tree_hash="tree", fingerprint="fp-wrong",
+    )
+
+    output = task_tools.complete_cycle(
+        server, task.id, cycle, "claim", "continue",
+        [{"kind": "execution", "exec_id": "px-wrong"}],
+    )
+
+    assert "EVIDENCE_INVALID" in output
+    assert "not pre-registered" in output
+
+
+def test_evidence_refusal_names_the_reason_it_already_computed(tmp_path):
+    # Without the reason the model can only guess at formats, which is how one
+    # bug turned into three abandoned cycles on the first live flight.
+    server, task = _server(tmp_path)
+    cycle = _cycle_id(task_tools.begin_cycle(server, task.id, "verify"))
+
+    output = task_tools.complete_cycle(
+        server, task.id, cycle, "claim", "continue",
+        [{"kind": "execution", "exec_id": "px-never-ran"}],
+    )
+
+    assert "EVIDENCE_INVALID" in output
+    assert "px-never-ran" in output
+    assert "missing, stale, or not owned" in output
+
+
 def test_source_receipt_uses_prior_server_recorded_read(tmp_path):
     server, task = _server(tmp_path)
     server.tasks.add_event(

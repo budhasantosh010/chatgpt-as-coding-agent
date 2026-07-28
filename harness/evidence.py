@@ -116,6 +116,28 @@ def _canonical_ref(kind: str, ref: dict, **extra) -> dict:
     return clean
 
 
+def _pre_registered(verification_plan) -> set[str] | None:
+    """The plan lines that are actually commands, or None if there are none.
+
+    `verification_plan` is free text a model writes for a human ("run pytest and
+    confirm the suite is green"). Treating every line as a pre-registered command
+    string rejected every real execution, and an empty plan — `"".splitlines()`
+    is `[]`, not None — rejected them hardest of all. Prose states intent; only a
+    line that is itself a verification command narrows what may be cited.
+
+    Dropping the check when the plan is prose opens no hole: an execution still
+    has to be harness-observed, exit 0, fresh, unmodified since, and either a
+    recognized verification command or operator-approved.
+    """
+    if verification_plan is None:
+        return None
+    commands = {
+        normalized for line in verification_plan
+        if classify_verification_command(normalized := normalize_command(line))
+    }
+    return commands or None
+
+
 def _family_events(store, task) -> list[dict]:
     task_ids = {task.id}
     if task.credit_scope_id:
@@ -151,10 +173,7 @@ def validate_evidence(
     valid: list[dict] = []
     ignored: list[dict] = []
     kinds: set[str] = set()
-    planned = (
-        {normalize_command(command) for command in verification_plan}
-        if verification_plan is not None else None
-    )
+    planned = _pre_registered(verification_plan)
 
     for raw in refs:
         if not isinstance(raw, dict):
@@ -279,6 +298,14 @@ def validate_evidence(
         unique.setdefault(identity, ref)
     valid = list(unique.values())
     if not valid:
-        raise ValueError("[EVIDENCE_INVALID] no server-valid evidence references")
+        # Say WHY. The per-reference reasons are already computed; withholding
+        # them leaves the model guessing at formats and burning cycles on a
+        # problem it cannot name.
+        detail = "; ".join(
+            f"{ref.get('kind', 'reference')} {ref.get('exec_id') or ref.get('file') or ''}"
+            f" rejected: {ref.get('reason', 'unknown')}".replace("  ", " ")
+            for ref in ignored
+        ) or "no references supplied"
+        raise ValueError(f"[EVIDENCE_INVALID] no server-valid evidence references — {detail}")
     tier = "machine" if "machine" in kinds else "source" if "source" in kinds else "decision"
     return EvidenceValidation(tier, valid, frozenset(kinds), ignored)
