@@ -919,7 +919,9 @@ def finish_task(server, task_id: str, result: str = "", evidence: str = "") -> s
     # There is no legitimate reading of "this task is done" that leaves the last
     # stretch of work unrecorded, and unlike mid-run there is no turn left to
     # falsely interrupt.
-    if (pending := turns.unpublished_work(server.config.state_dir, task_id)):
+    if (pending := turns.unpublished_work(
+        server.config.state_dir, task_id, ignoring={"finish_task"}
+    )):
         return (
             f"Error: [TURN_UNPUBLISHED] {pending} observed tool calls have not "
             f"been published. Call publish_turn (or discard_turn with a reason) "

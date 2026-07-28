@@ -42,6 +42,41 @@ proved something:
   collection. Operator setup, not a harness bug: bind a task to the project
   folder, not its parent.
 
+## F3 — `finish_task` blocked on its own invocation (deadlock)
+
+Found on the big-test flight, task `T-df66550dbd02a833b86dc607`, 2026-07-28.
+
+**What happened.** `finish_task` was called and refused with
+`[TURN_UNPUBLISHED] 1 observed tool calls have not been published`. The model
+published, retried, and was refused again with the same count of 1. It correctly
+diagnosed it: "the harness counted the `finish_task` invocation itself as the
+unpublished call."
+
+**Where.** The observation hook (`make_turn_hook`, wired into
+`_recording_hooks`) runs **before** the tool body. `finish_task` is not in
+`turns._ORIENTATION`, so calling it appends itself to the open turn; the gate at
+`tools.py` then reads `unpublished_work(...) == 1` and refuses.
+
+**Why it is a deadlock, not strictness.** Publishing clears the turn, but the
+next attempt re-creates it. There is no ordering of calls that finishes the
+task. A gate whose own trigger is the thing it blocks can never open.
+
+**Who it affects.** Every task that reaches completion — i.e. the end of every
+successful run. It was invisible until a flight actually tried to finish a task;
+the existing test only asserted that finish_task *refuses*, never that it can
+subsequently *succeed*.
+
+**Solution (one line).** Discount the finishing call itself:
+`unpublished_work(..., ignoring={"finish_task"})`.
+
+**Fixed**, with two tests — one that the retry succeeds, one that real work
+recorded after the finishing call still blocks, so the exemption stays narrow.
+Suite 471 green.
+
+---
+
+## Not a failure, recorded for accuracy
+
 Unrelated and separately recorded in memory: the Tailscale Funnel silently
 deregistered during the engine restart while `tailscale funnel status` still
 reported "Funnel on" (it reads local config, not the live route). A localhost or

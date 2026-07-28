@@ -105,9 +105,22 @@ def open_turn(state_dir: Path, task_id: str) -> dict | None:
     return read_json(_open_path(state_dir, task_id), None) or None
 
 
-def unpublished_work(state_dir: Path, task_id: str) -> int:
+def unpublished_work(state_dir: Path, task_id: str, ignoring: frozenset | set = frozenset()) -> int:
+    """Observed-but-unpublished tool calls, optionally discounting some tools.
+
+    `ignoring` exists for the finishing call itself. The observation hook runs
+    *before* the tool, so `finish_task` records itself and then refuses because
+    unpublished work exists; publishing clears it, the retry records itself
+    again, and the task can never be finished. A gate that is triggered by its
+    own invocation is a deadlock, so the finishing call is discounted — and
+    only the finishing call.
+    """
     state = open_turn(state_dir, task_id)
-    return len(state.get("tool_calls", [])) if state else 0
+    if not state:
+        return 0
+    return sum(
+        1 for call in state.get("tool_calls", []) if call.get("tool") not in ignoring
+    )
 
 
 def crossed_a_turn_boundary(state_dir: Path, task_id: str) -> bool:

@@ -157,6 +157,37 @@ def test_finish_task_refuses_while_any_work_is_unpublished(tmp_path):
     assert "1 observed tool calls" in output
 
 
+def test_finish_task_does_not_block_on_its_own_failed_attempt(tmp_path):
+    # Found on the 2026-07-28 big-test flight: finish_task is not an orientation
+    # tool, so calling it recorded ITSELF as unpublished work and then refused
+    # because unpublished work existed. Publishing cleared it, the next attempt
+    # recorded itself again, and the task could never be finished. A gate whose
+    # own trigger is the thing it blocks is a deadlock, not a gate.
+    server, task = _server(tmp_path)
+    server.record_tool_call("edit_file", task.id, ("a.py",))
+
+    assert "TURN_UNPUBLISHED" in task_tools.finish_task(server, task.id, "done")
+    task_tools.publish_turn(server, task.id, "finish it", "finishing")
+
+    # The retry: the hook observes finish_task before the gate reads the ledger.
+    server.record_tool_call("finish_task", task.id, ())
+    output = task_tools.finish_task(server, task.id, "done")
+
+    assert "TURN_UNPUBLISHED" not in output
+
+
+def test_real_work_after_publishing_still_blocks_finish(tmp_path):
+    # The exemption is narrow: only the finishing call itself is discounted.
+    server, task = _server(tmp_path)
+    server.record_tool_call("edit_file", task.id, ("a.py",))
+    task_tools.publish_turn(server, task.id, "q", "a")
+
+    server.record_tool_call("finish_task", task.id, ())
+    server.record_tool_call("edit_file", task.id, ("b.py",))
+
+    assert "TURN_UNPUBLISHED" in task_tools.finish_task(server, task.id, "done")
+
+
 def test_resume_task_replays_the_ledger_and_labels_it_non_evidence(tmp_path):
     # This is the whole point: a NEW chat picks up where the last one stopped.
     server, task = _server(tmp_path)
