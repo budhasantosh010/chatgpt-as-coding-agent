@@ -16,7 +16,37 @@ converted into a spent credit.
 
 Two findings are recorded below. F1 is the blocker; F2 is why it took three
 cycles to notice. **Both are fixed** in `evidence.py` (4 new tests, suite
-469 green) — but fixed is not flown. The re-flight is still owed.
+469 green) **and both are now flown.**
+
+## Re-flight — 2026-07-28T16:14:24Z, PASS
+
+Same task, cycle `cy-9a46cc1b36f0bb8c288ab913`:
+
+```
+Credit spent (machine tier). Scope cs-1c73b12e…: 1/8.
+Receipt: effort/cy-9a46cc1b36f0bb8c288ab913.md
+```
+
+The first credit ever spent on this build. The receipt shows the asymmetry
+holding: the model supplied `exec_id` and `reason`; the server wrote `command`
+and `execution_fingerprint`.
+
+Two refusals on the way there were **correct behaviour, not defects**, and each
+proved something:
+
+- `[EVIDENCE_INVALID] … execution px-b6432528 rejected: execution is missing,
+  stale, or not owned` — pytest had exited 1. F2's named reason is what made
+  this diagnosable in one step instead of three cycles.
+- The exit-1 run came from the task being bound to the **parent** of eight
+  sibling projects, so pytest collected four same-named test modules and failed
+  collection. Operator setup, not a harness bug: bind a task to the project
+  folder, not its parent.
+
+Unrelated and separately recorded in memory: the Tailscale Funnel silently
+deregistered during the engine restart while `tailscale funnel status` still
+reported "Funnel on" (it reads local config, not the live route). A localhost or
+MagicDNS probe of the `*.ts.net` name cannot detect this — it is answered inside
+the tailnet. Only a connection to the public ingress IPs with SNI reveals it.
 
 ---
 
