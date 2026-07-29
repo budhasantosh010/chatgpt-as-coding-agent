@@ -90,6 +90,38 @@ def test_new_session_dialog_exposes_all_four_locked_controls(client):
     assert ">Auto<" not in ultra
 
 
+def test_operator_surfaces_offer_every_permission_mode(client):
+    """The mode list the operator can see must be the mode list the server
+    accepts. It was hardcoded to the four modes under the ceiling, which left
+    `full` and `bypass_sandboxed` reachable by api_set_mode but unreachable by
+    the human the ceiling exists to serve."""
+    from harness.policy import MODE_ORDER
+
+    c, cp, tmp = client
+    assert c.get("/api/state").json()["modes"] == list(MODE_ORDER)
+    dialog = c.get("/").text.split('id="ntMode"', 1)[1].split("</select>", 1)[0]
+    for mode in MODE_ORDER:
+        assert f'value="{mode}"' in dialog
+    # Elevated modes must not read as the everyday four.
+    assert dialog.count("operator only") == 2
+
+
+def test_every_mode_has_a_plain_english_label_in_the_renderer(client):
+    """render.mjs labels each mode from its own MODE_NOTE map. Adding a mode to
+    policy.py and forgetting the label would render a bare identifier next to
+    five explained ones — so the map has to be checked against the source of
+    truth, not eyeballed."""
+    import re
+
+    from harness.policy import MODE_ORDER
+
+    c, cp, tmp = client
+    js = c.get("/static/render.mjs").text
+    block = js.split("const MODE_NOTE = {", 1)[1].split("};", 1)[0]
+    labelled = set(re.findall(r"(\w+):", block))
+    assert labelled == set(MODE_ORDER)
+
+
 def test_contract_option_lists_cannot_drift_between_uis(client):
     """The New Session dialog and the attach-contract panel must render the
     same option numbers, sourced from contract-options.mjs alone (this guard

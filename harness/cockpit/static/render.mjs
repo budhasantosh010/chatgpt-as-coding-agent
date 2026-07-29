@@ -208,6 +208,34 @@ function auditPanel(task) {
   </section>`;
 }
 
+// The elevated modes are the operator's to grant, so they belong in the list —
+// but they must not look like the everyday four. Label what each one costs, and
+// make bypass_sandboxed unpickable when there is no container to bypass into,
+// since the server would only degrade it back to auto_workspace.
+const MODE_NOTE = {
+  read_only: "look only",
+  plan: "read and plan, no edits",
+  build_ask: "approve every change",
+  auto_workspace: "edit and test",
+  bypass_sandboxed: "no approvals, Docker sandbox",
+  full: "no approvals, no sandbox",
+};
+
+function modeOptions(state, current) {
+  const ceiling = state.data.max_mode || "auto_workspace";
+  const order = state.data.modes || [];
+  const rank = (mode) => order.indexOf(mode);
+  const noDocker = (state.data.sandbox || "local") !== "docker";
+  return order.map((mode) => {
+    const elevated = rank(mode) > rank(ceiling);
+    const blocked = mode === "bypass_sandboxed" && noDocker;
+    const label = `${mode} — ${MODE_NOTE[mode] || ""}${elevated ? " (operator only)" : ""}`
+      + (blocked ? " — needs HARNESS_SANDBOX=docker" : "");
+    return `<option value="${esc(mode)}" ${mode === current ? "selected" : ""}`
+      + `${blocked ? " disabled" : ""}>${esc(label)}</option>`;
+  }).join("");
+}
+
 function workspace(state) {
   const task = state.data.tasks.find((item) => item.id === state.selectedTask);
   const project = state.data.projects.find((item) => item.id === (task?.project_id || state.selectedProject));
@@ -223,7 +251,7 @@ function workspace(state) {
     ${approvals.length ? `<section class="attention-banner"><strong>${approvals.length} action${approvals.length === 1 ? "" : "s"} need approval</strong><button class="text-button" data-action="inspector-tab" data-tab="approvals" type="button">Review</button></section>` : ""}
     <header class="task-header">
       <div><p class="breadcrumb">${esc(project?.name || "Project")}${task.parent_id ? " / fork" : ""}</p><h1>${esc(task.title || task.goal)}</h1></div>
-      <div class="task-actions"><select id="modeSelect" class="mode-select" aria-label="Permission mode">${state.data.modes.map((mode) => `<option value="${esc(mode)}" ${mode === task.mode ? "selected" : ""}>${esc(mode)}</option>`).join("")}</select><button class="quiet-button" data-action="fork" type="button">Fork</button><button class="primary-button" data-action="open-chat" type="button">Open ChatGPT</button></div>
+      <div class="task-actions"><select id="modeSelect" class="mode-select" aria-label="Permission mode">${modeOptions(state, task.mode)}</select><button class="quiet-button" data-action="fork" type="button">Fork</button><button class="primary-button" data-action="open-chat" type="button">Open ChatGPT</button></div>
     </header>
     ${contractPanel(task)}
     <section class="resume-panel">

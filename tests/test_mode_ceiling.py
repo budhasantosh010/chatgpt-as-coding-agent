@@ -93,6 +93,43 @@ def test_bypass_without_docker_degrades_to_auto_workspace(server):
     assert hc.policy.mode == "auto_workspace"
 
 
+def test_operator_may_start_a_task_at_full(server):
+    """The cockpit is the operator. The ceiling asks whether the MODEL may grant
+    itself powers, so it must not stand between the operator and a mode the same
+    server already lets them set with `tasks set-mode`."""
+    srv, ws = server
+    msg = run(tasktools.start_task(srv, str(ws), goal="g", permission_mode="full",
+                                   operator=True))
+    task = srv.tasks.get_task(msg.split()[2])
+    assert task.permission_mode == "full"
+    # Without the recorded elevation, effective_mode() clamps it straight back.
+    assert task.operator_elevated is True
+    assert srv.context_for(task.id, "conn").policy.mode == "full"
+
+
+def test_operator_start_still_needs_docker_for_bypass(server):
+    """Elevation is about authority; the sandbox check is about whether the
+    sandbox exists. The operator cannot conjure a container by asking."""
+    srv, ws = server
+    with pytest.raises(SecurityError, match="sandbox"):
+        run(tasktools.start_task(srv, str(ws), goal="g",
+                                 permission_mode="bypass_sandboxed", operator=True))
+
+
+def test_operator_flag_does_not_leak_to_the_model_path(server):
+    """The default is still refusal — only an explicit operator=True waives it."""
+    srv, ws = server
+    with pytest.raises(SecurityError, match="ceiling"):
+        _start(srv, ws, "full")
+
+
+def test_operator_start_below_ceiling_is_not_marked_elevated(server):
+    srv, ws = server
+    msg = run(tasktools.start_task(srv, str(ws), goal="g",
+                                   permission_mode="build_ask", operator=True))
+    assert srv.tasks.get_task(msg.split()[2]).operator_elevated is False
+
+
 def test_cli_set_mode_elevates(tmp_path):
     from harness.__main__ import _cmd_tasks
 

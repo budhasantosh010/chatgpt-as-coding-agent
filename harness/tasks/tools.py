@@ -15,7 +15,7 @@ from pathlib import Path
 
 from ..evidence import validate_evidence
 from ..observations import tree_hash
-from ..policy import VALID_MODES, check_ceiling
+from ..policy import VALID_MODES, check_ceiling, mode_rank
 from ..security import SecurityError, is_within
 from ..session import _now_iso
 from . import turns
@@ -140,8 +140,10 @@ async def start_task(server, project_path: str, goal: str, permission_mode: str 
     if permission_mode not in VALID_MODES:
         raise SecurityError(f"permission_mode must be one of {VALID_MODES}, got {permission_mode!r}")
     # Server-side ceiling: the model may not grant itself privileges. full /
-    # bypass_sandboxed (by default) are operator-only via the local CLI.
-    check_ceiling(permission_mode, server.config.max_mode, server.config.sandbox)
+    # bypass_sandboxed (by default) are operator-only — from the local CLI or
+    # the localhost-only cockpit, both of which pass operator=True.
+    check_ceiling(permission_mode, server.config.max_mode, server.config.sandbox,
+                  operator=operator)
     if not goal or not goal.strip():
         raise SecurityError("A task needs a goal.")
     # Empty isolation => use the operator's configured default (default_isolation,
@@ -169,6 +171,12 @@ async def start_task(server, project_path: str, goal: str, permission_mode: str 
         *create_args, goal=goal.strip(), title=(title or goal[:60]).strip(),
         permission_mode=permission_mode,
     )
+    # Record the elevation, or effective_mode() silently clamps the task back to
+    # the ceiling on its first tool call and the operator's choice evaporates.
+    if operator and mode_rank(permission_mode) > mode_rank(server.config.max_mode):
+        task.operator_elevated = True
+        server.tasks.save_task(task)
+        server.tasks.add_event(task.id, "operator_elevated", mode=permission_mode)
     # Physical isolation: bind a worktree so concurrent tasks on the same
     # project never edit the same files. "auto" = worktree when it's a git repo
     # with commits; "workspace" opts into the shared checkout.

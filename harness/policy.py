@@ -58,10 +58,20 @@ def mode_rank(mode: str) -> int:
         return len(MODE_ORDER)  # unknown mode ranks above everything: fail closed
 
 
-def check_ceiling(requested: str, ceiling: str, sandbox: str = "local") -> None:
+def check_ceiling(requested: str, ceiling: str, sandbox: str = "local",
+                  operator: bool = False) -> None:
     """Reject a model-requested mode above the operator ceiling. Rejection (not a
-    silent clamp) so the model plans around the powers it actually has."""
-    if mode_rank(requested) > mode_rank(ceiling):
+    silent clamp) so the model plans around the powers it actually has.
+
+    `operator=True` waives the ceiling — and only the ceiling. The ceiling asks
+    "may the MODEL grant itself this?", so it is meaningless when the caller is
+    the operator: the local CLI and the localhost-only cockpit are the same
+    authority that `harness tasks set-mode` already trusts to elevate a task.
+    The sandbox check below is not a privilege question — bypass_sandboxed with
+    no container relies on a sandbox that does not exist — so it applies to
+    everyone, operator included.
+    """
+    if not operator and mode_rank(requested) > mode_rank(ceiling):
         raise SecurityError(
             f"permission_mode {requested!r} is above this server's ceiling "
             f"({ceiling!r}, set by HARNESS_MAX_MODE). Ask the operator to elevate "

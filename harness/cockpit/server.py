@@ -35,6 +35,7 @@ from starlette.routing import Route
 from starlette.staticfiles import StaticFiles
 
 from ..config import Config
+from ..policy import MODE_ORDER
 
 STATIC = Path(__file__).parent / "static"
 
@@ -188,7 +189,12 @@ def build_cockpit_app(cockpit: Cockpit) -> Starlette:
             "roots": [str(r) for r in cfg.workspace_roots],
             "engine": cockpit.supervisor.engine_status() if cockpit.supervisor else "n/a",
             "max_mode": cfg.max_mode,
-            "modes": ["read_only", "plan", "build_ask", "auto_workspace"],
+            # Every mode, not just the ones under the ceiling. The ceiling binds
+            # the MODEL; the cockpit is the operator and has always been allowed
+            # to elevate (see api_set_mode). Hiding the elevated modes here left
+            # the operator with no way to reach powers the server already grants.
+            "modes": list(MODE_ORDER),
+            "sandbox": cfg.sandbox,
         })
 
     async def api_approvals(request):
