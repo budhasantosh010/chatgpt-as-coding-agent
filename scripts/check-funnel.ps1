@@ -23,7 +23,7 @@ if (-not $engineUp) {
 }
 
 $py = @"
-import json, socket, ssl, urllib.request
+import json, socket, ssl, time, urllib.request
 host, route = "$hostName", "$route"
 with urllib.request.urlopen(urllib.request.Request(
         f"https://dns.google/resolve?name={host}&type=A",
@@ -36,17 +36,36 @@ req = (f"POST /{route}/mcp HTTP/1.1\r\nHost: {host}\r\n"
        "Content-Type: application/json\r\n"
        "Accept: application/json, text/event-stream\r\n"
        f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n") + body
-ctx, ok = ssl.create_default_context(), 0
-for ip in ips:
-    try:
-        with socket.create_connection((ip, 443), timeout=15) as raw:
-            with ctx.wrap_socket(raw, server_hostname=host) as tls:
-                tls.sendall(req.encode())
-                line = tls.recv(4096).decode("utf-8", "replace").splitlines()[0]
-        print(f"  {ip:16s} {line}")
-        ok += 1
-    except Exception as exc:
-        print(f"  {ip:16s} FAILED: {type(exc).__name__}")
+ctx = ssl.create_default_context()
+
+
+def probe(ip):
+    with socket.create_connection((ip, 443), timeout=15) as raw:
+        with ctx.wrap_socket(raw, server_hostname=host) as tls:
+            tls.sendall(req.encode())
+            return tls.recv(4096).decode("utf-8", "replace").splitlines()[0]
+
+
+# The ingress needs a moment to pick up the route after the funnel is
+# registered. Probing once right after `tailscale funnel --bg` reports a
+# healthy funnel as dead, which is worse than waiting.
+ok, last = 0, {}
+for attempt in range(6):
+    ok, last = 0, {}
+    for ip in ips:
+        try:
+            last[ip] = probe(ip)
+            ok += 1
+        except Exception as exc:
+            last[ip] = f"not answering yet ({type(exc).__name__})"
+    if ok:
+        break
+    if attempt < 5:
+        print(f"  ...ingress not routing yet, retrying ({attempt + 1}/5)")
+        time.sleep(10)
+
+for ip, line in last.items():
+    print(f"  {ip:16s} {line}")
 raise SystemExit(0 if ok else 1)
 "@
 
@@ -55,7 +74,12 @@ $py | & C:\Python313\python.exe -
 if ($LASTEXITCODE -eq 0) {
     Write-Host "`nReachable from the internet. ChatGPT can connect." -ForegroundColor Green
 } else {
-    Write-Host "`nNOT reachable. The funnel deregistered. Fix (URL does not change):" -ForegroundColor Yellow
-    Write-Host '  tailscale funnel --https=443 off; tailscale funnel --bg 8848'
+    Write-Host "`nNOT reachable after a minute of retries. Two known causes:" -ForegroundColor Yellow
+    Write-Host '  1. The funnel deregistered. Re-register (the URL does not change):'
+    Write-Host '       tailscale funnel --https=443 off; tailscale funnel --bg 8848'
+    Write-Host '  2. This network blocks VPN services, so tailscaled cannot log in.'
+    Write-Host '     Check with: tailscale status'
+    Write-Host '     "You are logged out" / "NoState" means the network is the problem,'
+    Write-Host '     not the funnel. Public and guest Wi-Fi block Tailscale by policy.'
     exit 1
 }
