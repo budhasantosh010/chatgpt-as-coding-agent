@@ -1,4 +1,19 @@
-# The Complete Manual — read this first
+# The Complete Manual — the older deep-dive
+
+> ## ⚠️ Read [USING-THE-HARNESS.md](USING-THE-HARNESS.md) first
+>
+> That is the **current** manual (2026-07-29). This one was written earlier and
+> is kept because it still has the best coverage of the **full operator CLI**,
+> loading skills from `~/.agents/skills`, and the gotchas list.
+>
+> **Where the two disagree, the newer doc wins.** Known stale sections here:
+>
+> | § | What changed since |
+> | --- | --- |
+> | §0 startup | `start-harness.bat` now does all four steps and checks the real public path |
+> | §4–6 modes | All six modes are in the Workbench dropdown now, labelled, with the ceiling explained |
+> | §6 "you have no buttons here" | You do. The Workbench shows and sets the mode. |
+> | anywhere | Run Contracts, the Turn Ledger and server-validated evidence postdate this doc entirely |
 
 This explains **the whole system**, in plain words, with nothing hidden.
 If you finish this page you know everything the person who built it knows.

@@ -1,5 +1,19 @@
 # Side-by-side: our harness vs Codex, Claude Code, OpenCode, Cursor, Pi
 
+> ## ⚠️ Stale — last reconciled 2026-07-16
+>
+> The **current** comparison is §12 of
+> [USING-THE-HARNESS.md](USING-THE-HARNESS.md). This doc predates Run Contracts,
+> the Turn Ledger, server-validated evidence and the signed flight, so it
+> understates what the harness does. It is kept for the researched per-feature
+> detail and the sources at the bottom.
+>
+> One correction that matters and is wrong throughout this file: **"code on your
+> own machine with your ChatGPT subscription" is no longer unique** — Codex CLI
+> can sign in with a ChatGPT subscription too. The unique parts are the
+> governance layer (proof, gates, contracts, receipts) and that any ChatGPT
+> client, including the phone app, can drive your real machine.
+
 Researched July 2026 against live docs (not memory). Sources at the bottom.
 **Last reconciled to our actual code: 2026-07-16** — LSP, user hooks, fork,
 path-scoped rules, auto-format, and the Workbench GUI are now BUILT (they were
