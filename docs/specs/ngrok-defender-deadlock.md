@@ -1,82 +1,115 @@
-# The ngrok second door is blocked by a version deadlock (2026-08-25)
+# The ngrok second door: two blockers, both resolved (2026-08-25)
 
-Status: **unresolved, and not resolvable from inside this repository.**
-The code is finished, tested and correct. The blocker is entirely external.
+Status: **RESOLVED and flown.** A real MCP `initialize` crossed the public
+ngrok path and returned `HTTP 200 application/json` with a valid
+`protocolVersion` handshake.
 
-Recorded here because the two halves of it produce completely different error
-messages, days apart, and each looks individually solvable. Together they are
-not.
+Kept because the two blockers produced error messages that pointed at the wrong
+causes, and because the second one is a security decision that deserves a
+written record of *how* it was settled rather than just *that* it was.
 
-## The deadlock
+## What looked like one problem was two
 
 ```
-   ngrok 3.3.1                         ngrok 3.20.0+
-   (the winget build)                  (ngrok update / official zip)
-        |                                     |
-        | valid Authenticode signature        | Windows Defender:
-        | CN="ngrok, Inc."                    |   Trojan:Win32/Kepavll!rfn
-        | DigiCert, Status=Valid              |   severity 5
-        | runs fine                           |   QUARANTINED
-        |                                     |
-        v                                     v
-   ngrok's servers REFUSE it:            the zip downloads (11.69 MB)
-   ERR_NGROK_121                         but will NOT extract.
-   "agent version 3.3.1 is too old,      An in-place `ngrok update` leaves
-    the minimum supported agent          the PATH shim pointing at a file
-    version for your account is          Windows refuses to open, so even
-    3.20.0"                              `ngrok version` fails.
-        |                                     |
-        +------------------+------------------+
-                           v
-              NO VERSION SATISFIES BOTH
+   BLOCKER 1 -- ngrok's account policy
+   ───────────────────────────────────
+   winget carries only ngrok 3.3.1.
+   ngrok refuses free-tier agents below 3.20.0:
+
+       ERROR: authentication failed: Your ngrok-agent version "3.3.1"
+              is too old. The minimum supported agent version for your
+              account is "3.20.0".   ERR_NGROK_121
+
+   ^ It says AUTHENTICATION FAILED. The authtoken was correct and always
+     had been. Nothing about the message points at the version unless you
+     read past the first three words.
+
+   BLOCKER 2 -- Windows Defender
+   ─────────────────────────────
+   Every build at or above the floor is flagged:
+
+       Trojan:Win32/Kepavll!rfn   severity 5
+
+   The official zip downloads (11.69 MB) but will not extract. An in-place
+   `ngrok update` leaves the PATH shim pointing at a file Windows refuses to
+   open, so even `ngrok version` fails with "the file contains a virus".
+
+   Definitions were current (1.457.327.0, 2026-08-24) -- not stale-signature
+   noise.
 ```
 
-## Verified facts, and what stayed unverified
+Each looks individually solvable. Together they read as a deadlock: the only
+Defender-clean version is the one ngrok rejects.
 
-| Claim | Status | How |
-|---|---|---|
-| 3.3.1 is genuine ngrok | **verified** | `Get-AuthenticodeSignature` → `Valid`, `CN="ngrok, Inc."`, issuer DigiCert G4 Code Signing |
-| 3.3.1 runs on this machine | **verified** | `ngrok version` → `3.3.1` |
-| ngrok refuses 3.3.1 | **verified** | live run → `ERR_NGROK_121`, quoted above |
-| Paid plans are exempt from the minimum | **reported by ngrok** | stated in the ERR_NGROK_121 text itself |
-| Defender flags 3.39.x | **verified** | `Get-MpThreat` → `Trojan:Win32/Kepavll!rfn`, severity 5; extraction of the official zip fails |
-| Defender definitions are current | **verified** | `1.457.327.0`, updated 2026-08-24 — not a stale-signature artefact |
-| **The detection is a false positive** | **UNVERIFIED** | Defender blocks reading the binary, so its signature cannot be checked. Plausible — Defender routinely classifies tunnelling tools as riskware, and `!rfn` is an ML/reputation hit rather than a signature match — but plausible is not verified, and this project does not let plausible count. |
+## How blocker 2 was settled — the order matters
 
-The official download host is `bin.equinox.io`, which is ngrok's own CDN — the
-same host the winget manifest fetches 3.3.1 from. So the download channel is
-not in question; only the binary's contents are, and those could not be read.
+The tempting move is to exclude and move on. That would have left an unverified
+binary running with AV coverage removed, which is strictly worse than the block.
 
-## What this does NOT block
+What was done instead:
 
-The harness-side work is complete and independently correct:
+```
+  1. operator adds a folder exclusion, scoped to ONE directory
+       C:\Users\<user>\tools\ngrok
+  2. download from bin.equinox.io  (ngrok's own CDN -- the same host the
+     winget manifest fetches from, so the channel was never in question)
+  3. THEN check the signature, now that the file is readable
+  4. only then run it
+```
 
-- `HARNESS_PUBLIC_HOST` is accepted, normalized, and additive to the host
-  allowlist (`tests/test_second_door.py`, 7 tests).
-- `harness url` and `harness doctor` surface the second door.
-- `start-ngrok.bat` is a standalone path that never calls Tailscale.
-- `check-ngrok.ps1` separates the four ngrok-specific failure modes.
+Step 3 is the whole point. Before the exclusion, Defender blocked *reading* the
+file, which is precisely why the detection could not be judged. The exclusion
+did not prove the binary safe — it made the evidence obtainable.
 
-None of that depends on which ngrok version is installed. If the operator
-resolves the blocker, the door works with no code change.
+**What the evidence said:**
 
-## The options, stated without a recommendation
+| Field | Value |
+|---|---|
+| Status | `Valid` |
+| Signed by | `CN="ngrok, Inc."`, **Private Organization**, Delaware, serial 4599079 |
+| Issuer | DigiCert Trusted G4 Code Signing RSA4096 SHA384 2021 CA1 |
+| Validity | 2026-01-22 → 2029-01-25 (current) |
+| Timestamp | countersigned, DigiCert SHA256 RSA4096 Timestamp Responder 2025 |
+| SHA256 | `D339BCBD0713233337E860163F5249EEA679CF26750A5700510DBC241D201748` |
 
-| Option | Cost | What it changes |
-|---|---|---|
-| Defender exclusion for the ngrok binary | £0 | Lowers the machine's AV coverage for one path, on a detection that could not be verified either way. A security posture decision, and the operator's alone. |
-| Paid ngrok plan | ~£8+/mo | Paid accounts are exempt from the agent minimum, so the Defender-clean, validly signed 3.3.1 would connect. Breaks the project's £0 principle. |
-| Cloudflare Tunnel instead | ~£10/yr for a domain | `cloudflared` is not flagged. A *named* tunnel needs a domain you own; the free `trycloudflare.com` URLs rotate, which is useless here — a ChatGPT connector is bound to one URL and caches its tool menu per URL. |
-| Stay on Tailscale only | £0 | Everything keeps working exactly as it does today, except on networks that filter Tailscale by TLS SNI — which is the case the second door was built for. |
+The `Private Organization` OID marks an **Extended Validation** code-signing
+certificate — DigiCert verified ngrok, Inc. as a legal entity before issuing it.
+On that basis the detection is a **false positive**, and that is now a finding
+rather than the guess it was an hour earlier.
 
-## The lesson worth keeping
+## The flight
 
-Green tests said the second door worked. Seven of them, all passing, all
-honest about what they tested — and not one could have caught this, because
-every one of them is a fake request inside pytest and the blocker lives in two
-places no test reaches: ngrok's account policy and the machine's antivirus.
+```
+ ngrok 3.39.11  ->  https://<reserved>.ngrok-free.dev  ->  127.0.0.1:8848
 
-That is the fourth time on this project that a green suite missed what one real
-attempt caught (fork bug, F1/F2, F3, this). The pattern is stable enough to
-plan around: **a suite proves the code does what it was written to do; only a
-flight proves the thing works.**
+ check-ngrok.ps1:
+   engine :8848 listening : True
+   HTTP 200  application/json
+   {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18", ...
+```
+
+Two open questions closed by that single run:
+
+- **The free-tier browser interstitial did not fire.** It targets browser-like
+  clients; a JSON POST goes straight through. The risk was real enough to flag
+  in advance, and `check-ngrok.ps1` still detects it, but it did not occur here.
+- **3.39.11 dropped `--domain` in favour of `--url`.** `ngrok.ps1` asks the
+  binary which flag it supports instead of assuming, so it picked the right one
+  with no edit. Had that been hardcoded, the failure would have been an
+  argument error that reads like a network fault.
+
+## Two things worth carrying forward
+
+**An error message names the layer that noticed, not the layer that broke.**
+"authentication failed" was emitted by ngrok's auth handshake, which is
+genuinely where the rejection happened — the *cause* was a version floor checked
+during that handshake. Reading only the first clause would have sent anyone
+hunting a perfectly good authtoken.
+
+**Green tests said this worked; a real attempt said it did not.** Seven tests,
+all passing, all honest about what they covered — and none could reach either
+blocker, because both live outside the process: one in ngrok's account policy,
+one in the machine's antivirus. That is the fourth time on this project a green
+suite missed what one flight caught (fork bug, F1/F2, F3, this). The pattern is
+stable enough to plan around: **a suite proves the code does what it was written
+to do; only a flight proves the thing works.**
