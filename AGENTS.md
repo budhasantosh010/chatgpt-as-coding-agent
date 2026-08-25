@@ -39,7 +39,7 @@ the same standard.
 
 | | Claim | Evidence |
 |---|---|---|
-| **machine-verified** | 68 MCP tools, **477 tests green** | `pytest tests -q`, exit 0, re-run 2026-08-25 |
+| **machine-verified** | 68 MCP tools, **484 tests green** | `pytest tests -q`, exit 0, re-run 2026-08-25 |
 | **machine-verified** | all phases through Phase 9 accepted | signed record with task / contract / receipt ids read back out of `tasks.db` — [docs/specs/four-controls-progress.md](docs/specs/four-controls-progress.md) |
 | **operator-reported** | run daily against **multiple real projects**; working; no outstanding defects; *"98% there"* | the operator's own use, 2026-07-29 → 2026-08-25. Not instrumented, not a benchmark. Recorded because it is the strongest signal this project has, and labelled because it is not a measurement. |
 | **unmeasured** | that any of the controls **improve outcomes** | **no such claim is made.** The controlled benchmark arms were specified and never run — see "Descoped, not done" in the progress doc. What is proven is that the controls are *enforced as specified*, not that enforcing them helps. |
@@ -65,6 +65,19 @@ permission to refactor.
        It is fixed and working, and ChatGPT connects THROUGH it. The funnel
        hostname and scripts/funnel.ps1 are off-limits unless the operator
        explicitly asks.
+
+       The ngrok "second door" (HARNESS_PUBLIC_HOST, scripts/ngrok.ps1) is
+       ADDITIVE and must stay that way: it adds one exact hostname to the
+       allowed list and touches nothing the funnel uses. Never route the
+       funnel through it, never make one a fallback for the other, and never
+       widen the host check to a *.ngrok-free.dev wildcard -- that suffix is
+       shared with every other ngrok tenant.
+
+       Every decision behind it, and the alternative each one rejected, is in
+       docs/specs/second-door-decision-log.md. Read it before touching
+       middleware host handling, the tunnel scripts, or the .bat launchers --
+       several of those choices look like inconsistencies worth cleaning up
+       and are not.
 
  [X] NEVER use https or gh for the git remote. SSH ONLY.
        origin = git@github.com:budhasantosh010/chatgpt-as-coding-agent.git
@@ -101,14 +114,25 @@ python -m pytest tests -q
 ```
 
 `doctor` validates config and environment — run it first whenever anything is
-odd. The suite is 477 tests, about 105 seconds.
+odd. The suite is 484 tests, about 105 seconds.
 
 What the operator actually double-clicks:
 
 ```
 start-harness.bat     tailscale check -> funnel -> engine (:8848 + :8849) -> verify
 stop-harness.bat      funnel down, then kill whatever listens on 8848 / 8849
+start-ngrok.bat       STANDALONE ngrok path: engine (start or reuse) -> ngrok
+                      -> verify. Never calls Tailscale, deliberately:
+                      start-harness.bat gates on `tailscale status`, so on a
+                      network that blocks Tailscale it refuses before the
+                      engine ever starts. Run both for two doors at once.
 ```
+
+Two tunnels, one engine. `scripts/check-funnel.ps1` and `scripts/check-ngrok.ps1`
+each send a real MCP `initialize` down the real public path, because every
+cheaper check lies: `tailscale funnel status` reads local config, a MagicDNS
+probe never leaves the tailnet, and `ngrok online` only means the agent reached
+ngrok's edge.
 
 CLI surface — **there is no `harness down`**, which is why `stop-harness.bat`
 stops by port:
@@ -133,7 +157,15 @@ Config is 12-factor, every variable prefixed `HARNESS_`, all validated in
 [harness/config.py](harness/config.py) — read that file rather than guessing a
 name. The ones that change behaviour most: `HARNESS_MODE`, `HARNESS_MAX_MODE`,
 `HARNESS_NO_TASK_MODE`, `HARNESS_SANDBOX`, `HARNESS_ARBITRARY_COMMANDS`,
-`HARNESS_STATE_DIR`.
+`HARNESS_STATE_DIR`, `HARNESS_PUBLIC_HOST`.
+
+One config trap worth knowing before you touch host handling:
+`HARNESS_ALLOWED_HOSTS` **replaces** the default `["localhost", "127.0.0.1"]`
+rather than extending it, so naming a tunnel there costs the operator access to
+their own Workbench with a 403 that reads exactly like a dead tunnel. That is
+why the second door has its own additive setting, why loopback is now allowed
+unconditionally in `middleware.py`, and why `tests/test_second_door.py` pins
+both.
 
 ## 5. The four concepts you must understand before editing anything
 
@@ -322,7 +354,7 @@ so a stale sentence never outranks a current one.
  1. git log --oneline -5                 what happened last
  2. read this file                       the rules
  3. python -m harness doctor             is the environment sane
- 4. python -m pytest tests -q            green BEFORE you touch it   (477)
+ 4. python -m pytest tests -q            green BEFORE you touch it   (484)
  5. read docs/specs/four-controls-progress.md
                                          what is done, what was descoped
  6. make the smallest tested change that does the job

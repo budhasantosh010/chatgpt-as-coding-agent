@@ -118,10 +118,24 @@ class SecurityMiddleware:
         except OSError:
             pass  # observability must never break a request
 
+    # Loopback is allowed unconditionally: the server binds it, `doctor` and the
+    # health probe use it, and an operator who overrides ALLOWED_HOSTS to name a
+    # tunnel would otherwise 403 their own machine with an error indistinguishable
+    # from a dead tunnel. It costs nothing — a browser-driven rebinding attack is
+    # stopped by the Origin check above, not by this one.
+    _LOOPBACK = frozenset({"localhost", "127.0.0.1"})
+
     def _host_allowed(self, host: str) -> bool:
+        if host in self._LOOPBACK:
+            return True
         if host in (h.lower() for h in self.config.allowed_hosts):
             return True
         if self.config.allow_ts_net and host.endswith(".ts.net"):
+            return True
+        # The second public door (ngrok), when one is configured. Exact match,
+        # never a "*.ngrok-free.dev" wildcard: that suffix is shared with every
+        # other tenant, so wildcarding it would trust strangers' subdomains.
+        if self.config.public_host and host == self.config.public_host:
             return True
         return False
 

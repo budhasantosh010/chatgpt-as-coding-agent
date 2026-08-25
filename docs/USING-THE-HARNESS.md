@@ -142,6 +142,42 @@ then the engine).
 The long way is below, because when the `.bat` stops you need to know what it
 was doing.
 
+### If this network blocks Tailscale: also double-click `start-ngrok.bat`
+
+Some public, guest and hotspot networks filter Tailscale by policy and nothing
+on your side fixes it (§13, failure ④). ngrok is a **second door to the same
+harness** — not a second harness:
+
+```
+      ChatGPT                                two roads,
+         |                                   one building
+   +-----+-----+
+   v           v
+ funnel      ngrok
+   |           |
+   +-----+-----+
+         v
+  localhost:8848        <- same engine, same tasks, same files,
+                           same state dir, same approved roots
+```
+
+Nothing migrates when you switch. The same task you started this morning over
+the funnel is the same task this afternoon over ngrok.
+
+**One-time setup:** claim a *reserved* domain at dashboard.ngrok.com → Domains
+(a rotating URL is useless here — a ChatGPT connector is glued to one URL),
+install ngrok, put the bare hostname in `.env` as `HARNESS_PUBLIC_HOST=`,
+restart the engine, then add the second URL from `python -m harness url` as its
+**own** ChatGPT connector. Full steps: README §2, *The second door*.
+
+**Daily:** on a network that blocks Tailscale, double-click **`start-ngrok.bat`
+on its own** — it starts the engine itself and never calls Tailscale. (Do not
+reach for `start-harness.bat` there: its step 1 gates on `tailscale status` and
+will stop before the engine ever starts.) To have both doors open on a good
+network, run `start-harness.bat` first, then `start-ngrok.bat`.
+
+You end up with two connectors in ChatGPT and pick whichever works today.
+
 ### Step 1 — Tailscale must be logged in
 
 ```powershell
@@ -245,6 +281,8 @@ and Claude Code. Isolated copies are opt-in (§8).
 
 ```
 1-4. double-click start-harness.bat   (or run the four steps in §4 by hand)
+4b.  OR double-click start-ngrok.bat   (if Tailscale is blocked - starts the
+                                       engine itself, no Tailscale needed)
 5. Workbench: [＋] add project (first time only)
 6. ChatGPT:   "Open <path> and start a task: <goal>"
 7. ...code, chat, iterate...
@@ -739,7 +777,7 @@ unique. The governance layer and the any-client access are what's unique.
 
 ---
 
-## 13. Troubleshooting — four failures that all look identical
+## 13. Troubleshooting — the failures that all look identical
 
 Every one of these presents to you as "ChatGPT can't connect." They have
 completely different causes and completely different fixes. Diagnose in order.
@@ -768,7 +806,23 @@ completely different causes and completely different fixes. Diagnose in order.
    Cause:   public/guest Wi-Fi and some hotspots filter VPN control endpoints
             by the hostname in the TLS handshake (SNI), and silently drop them.
             Signature: TCP connects, TLS handshake times out.
-   Fix:     NONE from your side. Use a network that permits it. Home works.
+   Fix:     Nothing fixes TAILSCALE here. Use the second door instead:
+            start-ngrok.bat  (§4). Different company, different endpoints,
+            so a filter aimed at Tailscale does not see it.
+
+⑤ NGROK SAYS "ONLINE" BUT CHATGPT GETS 403
+   Symptom: check-ngrok.ps1 → "HTTP 403 ... host not allowed"
+   Cause:   the engine was started BEFORE HARNESS_PUBLIC_HOST was set.
+            Config is read at startup only.
+   Fix:     stop-harness.bat, then start-harness.bat.
+            Confirm: python -m harness doctor → "second public door"
+
+⑥ NGROK RETURNS A WEB PAGE INSTEAD OF JSON
+   Symptom: check-ngrok.ps1 → "HTTP 200 text/html" / browser warning
+   Cause:   ngrok's free-tier interstitial answered instead of the harness.
+            ChatGPT cannot click through it.
+   Fix:     check-ngrok.ps1 prints the three options. Simplest is to use
+            the funnel door on a network that allows it.
 ```
 
 **The trap that fooled me once:** probing `desktop-fdce9ak.taila47816.ts.net`
@@ -882,3 +936,153 @@ Open, cosmetic:
 ```
 
 Nothing on that list blocks you from using it today.
+
+---
+
+## 18. The second door (ngrok) — the whole story
+
+*Added 2026-08-25. Nothing above this line was changed or removed.*
+
+### What it is, in one picture
+
+```
+                       ChatGPT
+                          |
+          +---------------+---------------+
+          |                               |
+          v                               v
+   Tailscale Funnel                     ngrok            <- TWO ROADS
+          |                               |
+          +---------------+---------------+
+                          |
+                          v
+                   localhost:8848                        <- ONE ENGINE
+                          |
+        tasks · workspaces · evidence · git · your files  <- ONE SET OF STUFF
+```
+
+**Not two harnesses. Two entrances to one building.** The task you started this
+morning over Tailscale is the same task this afternoon over ngrok. Nothing
+copies, nothing syncs, nothing migrates.
+
+### Why it exists
+
+Some networks — café, hotel, guest wifi, some hotspots — **block Tailscale on
+purpose**. They read the name inside the encrypted handshake and silently drop
+anything heading for a VPN service. Nothing you configure fixes it. That is
+failure ④ in §13, and until now it had no remedy. ngrok is a different company
+those filters don't recognise.
+
+### The one requirement that decides everything: a RESERVED domain
+
+```
+ EPHEMERAL (ngrok's default)              RESERVED (what you need)
+ ---------------------------              -----------------------
+ Mon  a3f9-81-2-x.ngrok.app               Mon  yourname.ngrok-free.dev
+ Tue  7c2e-81-2-x.ngrok.app   <- new!     Tue  yourname.ngrok-free.dev   <- same
+ Wed  b81d-81-2-x.ngrok.app   <- new!     Wed  yourname.ngrok-free.dev   <- same
+
+ = rebuild the ChatGPT connector DAILY    = set it up once, forever
+```
+
+A ChatGPT connector is **bound to one URL and caches its tool menu per URL** —
+it cannot be re-pointed (see §13 failure ①). So a rotating URL means rebuilding
+the connector every single day. Claim a reserved domain at
+dashboard.ngrok.com → **Domains**. Free accounts get one.
+
+### Installing ngrok — the part that will bite you
+
+```
+  ✗ DO NOT `winget install` and stop there.
+      winget carries 3.3.1. ngrok REFUSES free-tier agents below 3.20.0.
+      The error says "authentication failed" (ERR_NGROK_121) — your authtoken
+      is fine. It is the VERSION. Reading only the first two words costs you
+      an evening.
+
+  ✗ DO NOT run `ngrok update`.
+      It swaps the binary mid-flight; if your antivirus objects you are left
+      with a PATH entry pointing at a file Windows refuses to open, and even
+      `ngrok version` fails.
+
+  ✓ DO download from ngrok's own CDN into a folder of its own:
+      https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip
+      -> C:\Users\<you>\tools\ngrok
+
+  ✓ DO verify the signature BEFORE running it:
+      Get-AuthenticodeSignature "C:\Users\<you>\tools\ngrok\ngrok.exe"
+      expect:  Status   = Valid
+               Signer   = CN="ngrok, Inc."
+               Issuer   = DigiCert Trusted G4 Code Signing
+```
+
+**If Windows Defender blocks it** (it may flag it as
+`Trojan:Win32/Kepavll!rfn`): on this machine that was a **verified false
+positive** — the binary carries a DigiCert *Extended Validation* certificate,
+meaning DigiCert legally verified ngrok, Inc. as a registered company. If you
+add an exclusion, scope it to **that one folder**, and do it in this order:
+
+```
+   exclude one folder  ->  download  ->  VERIFY SIGNATURE  ->  then run
+                                         ^
+                                         the exclusion does not make it safe.
+                                         It makes the EVIDENCE READABLE — the
+                                         block was why you couldn't check.
+```
+
+An exclusion hiding an *unverified* binary is worse than the block it removed.
+
+### Setup, once
+
+```
+ 1. claim the reserved domain (dashboard.ngrok.com -> Domains)
+ 2. install + verify as above
+ 3. ngrok config add-authtoken <your token>
+ 4. put the BARE hostname in .env  (no https://, no port, no path):
+        HARNESS_PUBLIC_HOST=yourname.ngrok-free.dev
+    ^ NOT HARNESS_ALLOWED_HOSTS. That one REPLACES the default list and will
+      403 your own Workbench at 127.0.0.1:8849.
+ 5. restart the engine — config is read at startup ONLY
+ 6. python -m harness url   -> prints BOTH URLs
+ 7. add the ngrok URL as its OWN ChatGPT connector (never edit the old one)
+```
+
+### Daily
+
+```
+   start-ngrok.bat        <- that's it
+```
+
+It starts the engine itself and **never calls Tailscale**, so it works on the
+networks that break the funnel. (Do not reach for `start-harness.bat` there —
+its step 1 gates on `tailscale status` and stops before the engine ever starts.)
+
+Want both doors on a good network? `start-harness.bat`, then `start-ngrok.bat`.
+
+To close just this door: `.\scripts\stop-ngrok.ps1` — the funnel is untouched.
+
+### When it doesn't work
+
+`start-ngrok.bat` ends by sending a **real MCP `initialize` down the real public
+path**, because "ngrok online" only proves the agent reached ngrok's edge — it
+says nothing about whether the harness accepted what arrived. The check names
+which failure happened; see §13 ⑤ and ⑥.
+
+### Where the full reasoning lives
+
+Every decision behind this — including the ones that look like inconsistencies
+worth cleaning up, and why cleaning them up would break something — is recorded
+in **[docs/specs/second-door-decision-log.md](specs/second-door-decision-log.md)**.
+The two install blockers and how they were settled are in
+**[docs/specs/ngrok-defender-deadlock.md](specs/ngrok-defender-deadlock.md)**.
+
+### What is still not proven
+
+```
+ [x] works over the real internet — real handshake, real file created
+ [ ] NOT yet tested on a network that actually blocks Tailscale.
+     The reason it exists is still unexercised.
+ [ ] the free-tier interstitial was not observed — that is not the same
+     as ruled out.
+ [ ] this is not a security improvement. A second public entrance is a
+     second public entrance. Every gate is exactly as it was.
+```

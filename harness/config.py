@@ -66,6 +66,21 @@ def _env_int(name: str, default: int) -> int:
     return int(raw)
 
 
+def _normalize_host(raw: str) -> str:
+    """Reduce whatever the operator pasted to a bare lowercase hostname.
+
+    The Host header carries no scheme, no path and (after the middleware strips
+    it) no port, so a pasted "https://x.ngrok-free.dev/" would never match and
+    would fail as a 403 that reads exactly like a broken tunnel. Normalizing
+    here is cheaper than debugging that at 1am.
+    """
+    host = raw.strip().lower()
+    host = host.split("://", 1)[-1]      # scheme
+    host = host.split("/", 1)[0]         # path
+    host = host.split(":", 1)[0]         # port
+    return host
+
+
 def _load_dotenv(path: Path) -> None:
     """Minimal .env loader: KEY=VALUE lines, no export, no interpolation.
 
@@ -118,6 +133,13 @@ class Config:
     )
     allowed_hosts: list[str] = field(default_factory=lambda: ["localhost", "127.0.0.1"])
     allow_ts_net: bool = True
+    # A SECOND public door (ngrok) alongside the Tailscale Funnel, for networks
+    # that block Tailscale. One reserved hostname, no scheme, no port — e.g.
+    # "lyolytic-floria-indiscernible.ngrok-free.dev". Deliberately its own
+    # setting rather than an ALLOWED_HOSTS entry: ALLOWED_HOSTS *replaces* the
+    # default list, so naming a tunnel there silently drops localhost and 403s
+    # the operator's own Workbench. This one only ever adds.
+    public_host: str = ""
     shell: str = ""  # "" => auto (PowerShell on Windows, bash on POSIX)
     max_output_chars: int = 30000
     max_read_chars: int = 100000
@@ -277,6 +299,10 @@ class Config:
     def local_url(self) -> str:
         return f"http://{self.host}:{self.port}{self.mcp_path}"
 
+    def public_url(self) -> str:
+        """Connector URL for the extra tunnel, or "" when none is configured."""
+        return f"https://{self.public_host}{self.mcp_path}" if self.public_host else ""
+
     @staticmethod
     def _roots_file(state_dir: Path) -> Path:
         return Path(state_dir).expanduser() / "roots.json"
@@ -329,6 +355,7 @@ class Config:
             secret_route=_env("SECRET_ROUTE", ""),
             bearer_token=_env("BEARER_TOKEN", ""),
             allow_ts_net=_env_bool("ALLOW_TS_NET", True),
+            public_host=_normalize_host(_env("PUBLIC_HOST", "")),
             shell=_env("SHELL", ""),
             max_output_chars=_env_int("MAX_OUTPUT_CHARS", 30000),
             max_read_chars=_env_int("MAX_READ_CHARS", 100000),
@@ -420,6 +447,7 @@ class Config:
             "workspace_roots": [str(r) for r in self.workspace_roots],
             "allowed_origins": self.allowed_origins,
             "allowed_hosts": self.allowed_hosts + (["*.ts.net"] if self.allow_ts_net else []),
+            "public_host": self.public_host or "not set (Tailscale Funnel only)",
             "effort_profiles": self.effort_profiles,
             "model_concurrency": self.model_concurrency,
             "decision_caps": self.decision_caps,
