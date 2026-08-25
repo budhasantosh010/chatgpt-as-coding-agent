@@ -18,7 +18,7 @@ subscription you already pay for.
 > the hard rules, the four concepts you must understand before editing, the
 > architecture rule, and which docs are stale.
 
-**Status:** all phases complete and signed (2026-07-29). 68 tools, **477 tests
+**Status:** all phases complete and signed (2026-07-29). 68 tools, **484 tests
 green**, flown end to end on a real project.
 
 **In daily use since.** The operator has run it against **multiple real projects**
@@ -38,7 +38,7 @@ claims the controls improve outcomes**, only that they are enforced as specified
 | # | Section | What's in it |
 |---|---|---|
 | 1 | [Quickstart](#1-quickstart--double-click-one-file) | Double-click one file and go |
-| 2 | [Connect it to ChatGPT](#2-connect-it-to-chatgpt) | The connector, and the cache trap |
+| 2 | [Connect it to ChatGPT](#2-connect-it-to-chatgpt) | The connector, two tunnels, and the cache trap |
 | 3 | [What makes this different](#3-what-makes-this-different) | Proof, gates, contracts |
 | 4 | [The 68 tools](#4-the-tools-chatgpt-sees-68) | Grouped by job |
 | 5 | [Permission modes](#5-permission-modes-and-the-ceiling) | Plan / ask / auto / bypass / full |
@@ -69,6 +69,7 @@ ChatGPT  ──MCP over HTTPS──►  Tailscale Funnel  ──►  localhost:8
 ```
 start-harness.bat      ← starts everything
 stop-harness.bat       ← shuts it down
+start-ngrok.bat        ← optional second door, for networks that block Tailscale
 ```
 
 `start-harness.bat` runs the four steps that have to happen in order, and
@@ -186,6 +187,61 @@ state dir, so the URL stays stable across restarts.
 `python -m harness stdio` and point the client at it as a stdio MCP server — the
 same 68 tools, no Tailscale or secret route needed (the process boundary is the
 trust boundary).
+
+### The second door — ngrok, for networks that block Tailscale
+
+Failure ④ in [§11](#11-troubleshooting) has no fix from your side: some public,
+guest and hotspot networks filter Tailscale's control endpoints and there is
+nothing to configure your way out of it. A second tunnel is the answer, because
+**the tunnel is the only part that changes**:
+
+```
+                       ChatGPT
+                          |
+          +---------------+---------------+
+          v                               v
+   Tailscale Funnel                     ngrok          <- two roads
+          |                               |
+          +---------------+---------------+
+                          v
+                   localhost:8848                      <- ONE engine
+                          |
+        tasks · workspaces · evidence · git · files     <- ONE set of state
+```
+
+Not two harnesses. Two entrances to one running harness. Nothing migrates: same
+task IDs, same state dir, same approved roots, same files on the same disk. Both
+doors can be open at once — use whichever the network allows today.
+
+**Setup (once):**
+
+1. **Claim a reserved domain** at dashboard.ngrok.com → **Domains**. This is not
+   optional. Ephemeral ngrok URLs change on every restart, and a ChatGPT
+   connector is bound to one URL *and caches its tool menu per URL* (see the
+   trap above), so a rotating URL means rebuilding the connector daily. Free
+   accounts get one reserved domain.
+2. `winget install ngrok.ngrok` then `ngrok config add-authtoken <token>`.
+3. Put the bare hostname in `.env`:
+   ```
+   HARNESS_PUBLIC_HOST=your-name.ngrok-free.dev
+   ```
+   This is **added** to the allowed hosts. It never removes `localhost` or
+   `*.ts.net`, so the funnel keeps working unchanged. Do **not** use
+   `HARNESS_ALLOWED_HOSTS` for this — that one *replaces* the default list and
+   will 403 your own Workbench.
+4. Restart the engine. Config is read at startup only.
+5. `python -m harness url` now prints both URLs. Add the ngrok one as its **own**
+   ChatGPT connector — a connector cannot be re-pointed at a different URL.
+
+**Daily:** `start-harness.bat`, then `start-ngrok.bat`. The second script refuses
+to pretend: it checks the engine is listening, starts the tunnel on your reserved
+domain, then sends a real MCP `initialize` down the public path and tells you
+which of the four ngrok-specific failures happened if it doesn't come back.
+
+> **Known risk, not yet observed here:** ngrok's free tier serves a browser
+> interstitial to clients it thinks are browsers. ChatGPT can't click through
+> one. If `check-ngrok.ps1` reports HTML instead of JSON, that's this — it names
+> the three fixes. The Tailscale door has no interstitial.
 
 ## 3. What makes this different
 
@@ -577,7 +633,9 @@ this order — guessing costs more than checking.
 | ① | Connects fine, but the tool count is wrong or a tool is "missing" | ChatGPT cached the tool menu for that connector URL | Rotate `secret_route.txt`, add a **brand new** connector. Editing the old one does nothing. |
 | ② | `mcp_network_error`; `[Errno 10048]` on startup | Engine not running, or a stale one still holds :8848/:8849 | `stop-harness.bat`, then `start-harness.bat` |
 | ③ | `check-funnel.ps1` fails, but `tailscale funnel status` says "Funnel on" | **It's lying** — it reads local config, not the actual ingress | `tailscale funnel --https=443 off; tailscale funnel --bg 8848` (URL doesn't change) |
-| ④ | `tailscale status` → `Logged out` / `NoState` | This network blocks Tailscale: public/guest Wi-Fi and some hotspots filter VPN control endpoints by TLS SNI and silently drop them. Signature: TCP connects, TLS handshake times out. | **None from your side.** Use a network that permits it. |
+| ④ | `tailscale status` → `Logged out` / `NoState` | This network blocks Tailscale: public/guest Wi-Fi and some hotspots filter VPN control endpoints by TLS SNI and silently drop them. Signature: TCP connects, TLS handshake times out. | **Nothing fixes Tailscale here.** Use the [ngrok door](#the-second-door--ngrok-for-networks-that-block-tailscale) instead, or a different network. |
+| ⑤ | ngrok says "online", ChatGPT gets 403 | The engine started **before** `HARNESS_PUBLIC_HOST` was set. Config is read at startup only. | `stop-harness.bat`, `start-harness.bat`. Confirm with `python -m harness doctor` → *second public door*. |
+| ⑥ | ngrok returns an HTML page, not JSON | The free-tier browser interstitial answered instead of the harness | `check-ngrok.ps1` prints the three fixes. Simplest: use the funnel door. |
 
 > **The trap that fooled us once:** probing your own `*.ts.net` name from your own
 > machine returns HTTP 200 even when the public path is dead — MagicDNS answers
@@ -594,7 +652,7 @@ right — `[OPERATOR_REQUIRED]`, `[EVIDENCE_INVALID] … not owned`,
 ## 12. Development
 
 ```powershell
-python -m pytest -q          # 477 tests: security, tasks, contracts, evidence,
+python -m pytest -q          # 484 tests: security, tasks, contracts, evidence,
                              # effort ledger, turn ledger, permissions/approvals,
                              # mode ceiling, isolation, cockpit, LSP, rules/hooks,
                              # federation, approval-wait, skills paging, …

@@ -79,6 +79,12 @@ def _cmd_url(config: Config) -> int:
         print("Public URL once `tailscale funnel` is running:")
         print(f"  https://<machine>.<tailnet>.ts.net{config.mcp_path}")
         print("  (start Tailscale to auto-fill the hostname here)")
+    if config.public_host:
+        print()
+        print("Second door - ngrok (use on networks that block Tailscale):")
+        print(f"  {config.public_url()}")
+        print("  Add this as its OWN ChatGPT connector. A connector is bound to one")
+        print("  URL and caches its tool menu per URL, so it cannot be re-pointed.")
     return 0
 
 
@@ -173,6 +179,8 @@ def _cmd_doctor(config: Config) -> int:
     checked_tools = ["git", "rg", "tailscale"]
     if config.sandbox == "docker":
         checked_tools.append("docker")
+    if config.public_host:
+        checked_tools.append("ngrok")
     for tool in checked_tools:
         found = shutil.which(tool)
         note = found or "not found"
@@ -182,10 +190,17 @@ def _cmd_doctor(config: Config) -> int:
             note += " (grep falls back to pure Python)"
         elif tool == "docker" and not found:
             note += " (REQUIRED: HARNESS_SANDBOX=docker but docker is missing)"
+        elif tool == "ngrok" and not found:
+            note += " (HARNESS_PUBLIC_HOST is set but ngrok is not installed)"
         docker_missing = tool == "docker" and not found
         if docker_missing:
             ok = False
         print(f"  [{'ok' if found else ('MISSING' if docker_missing else 'warn')}] {tool}: {note}")
+    if config.public_host:
+        print(f"  [ok] second public door: {config.public_host}  (ngrok, alongside the funnel)")
+    else:
+        print("  [ok] second public door: none  (Tailscale Funnel only; set "
+              "HARNESS_PUBLIC_HOST to add ngrok)")
     print(f"  [ok] output scrubbing: {'on' if config.scrub_output else 'OFF'}")
     print(f"  [ok] execution backend: {config.sandbox}")
     if config.sandbox == "docker":

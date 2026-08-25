@@ -17,5 +17,5 @@ Quick orientation, then go read it:
                 use https/gh for git (SSH only)  ·  add npm/React
                 let model prose satisfy a gate  ·  let the model self-elevate
 
-  before edits  python -m harness doctor  &&  python -m pytest tests -q   (477)
+  before edits  python -m harness doctor  &&  python -m pytest tests -q   (484)
 ```

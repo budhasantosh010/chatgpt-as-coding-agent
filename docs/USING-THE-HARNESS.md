@@ -142,6 +142,37 @@ then the engine).
 The long way is below, because when the `.bat` stops you need to know what it
 was doing.
 
+### If this network blocks Tailscale: also double-click `start-ngrok.bat`
+
+Some public, guest and hotspot networks filter Tailscale by policy and nothing
+on your side fixes it (§13, failure ④). ngrok is a **second door to the same
+harness** — not a second harness:
+
+```
+      ChatGPT                                two roads,
+         |                                   one building
+   +-----+-----+
+   v           v
+ funnel      ngrok
+   |           |
+   +-----+-----+
+         v
+  localhost:8848        <- same engine, same tasks, same files,
+                           same state dir, same approved roots
+```
+
+Nothing migrates when you switch. The same task you started this morning over
+the funnel is the same task this afternoon over ngrok.
+
+**One-time setup:** claim a *reserved* domain at dashboard.ngrok.com → Domains
+(a rotating URL is useless here — a ChatGPT connector is glued to one URL),
+install ngrok, put the bare hostname in `.env` as `HARNESS_PUBLIC_HOST=`,
+restart the engine, then add the second URL from `python -m harness url` as its
+**own** ChatGPT connector. Full steps: README §2, *The second door*.
+
+**Daily:** `start-harness.bat`, then `start-ngrok.bat`. You end up with two
+connectors in ChatGPT and pick whichever the network allows today.
+
 ### Step 1 — Tailscale must be logged in
 
 ```powershell
@@ -245,6 +276,7 @@ and Claude Code. Isolated copies are opt-in (§8).
 
 ```
 1-4. double-click start-harness.bat   (or run the four steps in §4 by hand)
+4b.  double-click start-ngrok.bat     (ONLY if this network blocks Tailscale)
 5. Workbench: [＋] add project (first time only)
 6. ChatGPT:   "Open <path> and start a task: <goal>"
 7. ...code, chat, iterate...
@@ -739,7 +771,7 @@ unique. The governance layer and the any-client access are what's unique.
 
 ---
 
-## 13. Troubleshooting — four failures that all look identical
+## 13. Troubleshooting — the failures that all look identical
 
 Every one of these presents to you as "ChatGPT can't connect." They have
 completely different causes and completely different fixes. Diagnose in order.
@@ -768,7 +800,23 @@ completely different causes and completely different fixes. Diagnose in order.
    Cause:   public/guest Wi-Fi and some hotspots filter VPN control endpoints
             by the hostname in the TLS handshake (SNI), and silently drop them.
             Signature: TCP connects, TLS handshake times out.
-   Fix:     NONE from your side. Use a network that permits it. Home works.
+   Fix:     Nothing fixes TAILSCALE here. Use the second door instead:
+            start-ngrok.bat  (§4). Different company, different endpoints,
+            so a filter aimed at Tailscale does not see it.
+
+⑤ NGROK SAYS "ONLINE" BUT CHATGPT GETS 403
+   Symptom: check-ngrok.ps1 → "HTTP 403 ... host not allowed"
+   Cause:   the engine was started BEFORE HARNESS_PUBLIC_HOST was set.
+            Config is read at startup only.
+   Fix:     stop-harness.bat, then start-harness.bat.
+            Confirm: python -m harness doctor → "second public door"
+
+⑥ NGROK RETURNS A WEB PAGE INSTEAD OF JSON
+   Symptom: check-ngrok.ps1 → "HTTP 200 text/html" / browser warning
+   Cause:   ngrok's free-tier interstitial answered instead of the harness.
+            ChatGPT cannot click through it.
+   Fix:     check-ngrok.ps1 prints the three options. Simplest is to use
+            the funnel door on a network that allows it.
 ```
 
 **The trap that fooled me once:** probing `desktop-fdce9ak.taila47816.ts.net`
