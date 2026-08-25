@@ -7,13 +7,28 @@
 # open at once: they are two roads to the same localhost:8848, so the same
 # tasks, workspaces, evidence and files are behind either one.
 #
-# DO NOT RUN `ngrok update`. On this machine Windows Defender flags the current
-# ngrok release (3.39.11) as Trojan:Win32/Kepavll!rfn, severity 5, and quarantines
-# it mid-update -- which leaves the PATH shim pointing at a blocked file and
-# ngrok unusable. The winget build (3.3.1) carries a valid Authenticode
-# signature from "ngrok, Inc." (DigiCert) and supports --domain, which is all
-# this needs. Repair after an accidental update:
-#     winget install --id Ngrok.Ngrok --exact --force
+# KNOWN BLOCKER on this machine (2026-08-25) -- read before debugging:
+#
+#   ngrok 3.3.1  (winget; validly signed by "ngrok, Inc." via DigiCert)
+#       -> REJECTED BY NGROK: ERR_NGROK_121, "agent version 3.3.1 is too old,
+#          the minimum supported agent version for your account is 3.20.0".
+#          Paid accounts are exempt from that minimum; free ones are not.
+#
+#   ngrok 3.20+  (ngrok update, or the official bin.equinox.io zip)
+#       -> QUARANTINED BY WINDOWS DEFENDER as Trojan:Win32/Kepavll!rfn,
+#          severity 5, with current definitions (1.457.327.0). The zip
+#          downloads but will not extract; an in-place `ngrok update` leaves
+#          the PATH shim pointing at a file Windows refuses to open, so even
+#          `ngrok version` fails.
+#
+# No version satisfies both. It cannot be fixed from inside this repo. The
+# detection is probably heuristic -- Defender routinely flags tunnelling tools,
+# and !rfn is an ML/reputation hit rather than a signature match -- but that
+# stays UNVERIFIED, because Defender blocks reading the binary to check whether
+# it is properly signed. Do not treat "probably a false positive" as a finding.
+#
+# Resolving it is an operator decision, not a code change: a Defender exclusion,
+# a paid ngrok plan (3.3.1 then works), a different tunnel, or the funnel.
 #
 # One-time prerequisites:
 #   - ngrok installed            (winget install --id Ngrok.Ngrok --exact)
