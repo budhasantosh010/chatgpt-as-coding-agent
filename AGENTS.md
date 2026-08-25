@@ -33,6 +33,17 @@ provenance rule about who is allowed to assert what.
 
 ## 2. Status — what is verified, what is reported, what is unmeasured
 
+> ### 👉 START HERE IF YOU ARE PICKING THIS UP COLD
+> **[docs/specs/CATCHUP-2026-08-25.md](docs/specs/CATCHUP-2026-08-25.md)** — where
+> the project stands *today*: the ngrok second door, the `mcp<2` pin, and the one
+> open piece of work (three CI failures that pass locally). This file holds the
+> rules, which do not change; that file holds the situation, which does.
+>
+> **Two live constraints right now:** GitHub Actions minutes are exhausted until
+> **2026-09-01** and `ci.yml` fires on push-to-main *and* on pull_request — so do
+> not push `main` or open a PR without asking. And CI is currently **red**.
+
+
 Keep these three apart. This project's design premise is that *who asserted a
 thing* determines what it is worth; the status of the project itself is held to
 the same standard.
