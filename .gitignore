@@ -8,3 +8,8 @@ __pycache__/
 build/
 dist/
 *.egg-info/
+
+# The operator's ngrok scratch note (reserved-domain id). Machine-specific,
+# not part of the project. Ignored so no `git add -A` can sweep it into a
+# commit -- a mechanism, not a line in a manual that someone has to remember.
+ngrok.txt
