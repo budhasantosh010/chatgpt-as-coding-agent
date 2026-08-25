@@ -13,8 +13,20 @@ subscription you already pay for.
 > how to survive chat lag, all 68 tools, and an honest comparison against the
 > alternatives — including where this is worse.
 
-**Status:** all phases complete and signed (2026-07-29). 68 tools, 477 tests
-green, flown end to end on a real project. What was *not* done is recorded in
+> ### 🤖 Working on this repo with a coding agent? Read **[AGENTS.md](AGENTS.md)**
+> The handoff for Codex, Claude Code, Cursor, opencode, Gemini CLI and Copilot:
+> the hard rules, the four concepts you must understand before editing, the
+> architecture rule, and which docs are stale.
+
+**Status:** all phases complete and signed (2026-07-29). 68 tools, **477 tests
+green**, flown end to end on a real project.
+
+**In daily use since.** The operator has run it against **multiple real projects**
+from 2026-07-29 to 2026-08-25 with no outstanding defects reported — their words:
+*"98% there."* That is an operator report, not a measurement: it is not
+instrumented and it is not a benchmark, and it is recorded here as exactly that.
+
+What was *not* done is recorded in
 [docs/specs/four-controls-progress.md](docs/specs/four-controls-progress.md) —
 notably that the controlled benchmark arms were never run, so **nothing here
 claims the controls improve outcomes**, only that they are enforced as specified.
@@ -37,6 +49,7 @@ claims the controls improve outcomes**, only that they are enforced as specified
 | 10 | [Field-tested findings](#10-field-tested-july-2026-the-validated-architecture) | What parallelism really does here |
 | 11 | [Troubleshooting](#11-troubleshooting) | Four failures that look identical |
 | 12 | [Development](#12-development) | Tests, doctor |
+| — | [AGENTS.md](AGENTS.md) | Handoff for Codex / Cursor / opencode / Copilot |
 | — | [Which doc is which](#which-doc-is-which) | Read this before trusting a doc |
 
 ---
@@ -590,18 +603,23 @@ python -m harness doctor     # validate config + environment
 
 ## Which doc is which
 
-Three docs overlap because they were written at different times. **Trust them in
-this order** — this table exists so a stale sentence in an old doc never
-outranks a current one.
+Several docs overlap because they were written at different times. **Trust them
+in this order** — this table exists so a stale sentence in an old doc never
+outranks a current one. The same ranking is repeated in
+[AGENTS.md §9](AGENTS.md#9-which-doc-to-trust-in-order) for coding agents.
 
 | Doc | Status | Authoritative for |
 |---|---|---|
-| **[docs/USING-THE-HARNESS.md](docs/USING-THE-HARNESS.md)** | ✅ **current** (2026-07-29) | Everything. Startup, disk layout, permission modes + the ceiling, approvals, forking, the Turn Ledger, all 68 tools, the comparison, refusal messages, hard limits. |
+| **[AGENTS.md](AGENTS.md)** | ✅ **current** (2026-08-25) | **Coding agents start here.** Hard rules, the concepts behind the design, the architecture rule, conventions, settled limits. |
+| **[docs/USING-THE-HARNESS.md](docs/USING-THE-HARNESS.md)** | ✅ **current** (2026-07-29) | **Humans start here.** Startup, disk layout, permission modes + the ceiling, approvals, forking, the Turn Ledger, all 68 tools, the comparison, refusal messages, hard limits. |
 | [docs/MANUAL.md](docs/MANUAL.md) | ⚠️ older deep-dive | Still useful for the **full operator CLI command list**, `~/.agents/skills` loading, and gotchas. Its mode and startup sections predate the Workbench dropdown and the `.bat` launcher — prefer the doc above where they disagree. |
 | [docs/COMPARISON.md](docs/COMPARISON.md) | ⚠️ stale (2026-07-16) | Historical detail and sources. It predates the Turn Ledger, Run Contracts and the signed flight. The current comparison is §12 of the doc above. |
 | [docs/specs/four-controls-progress.md](docs/specs/four-controls-progress.md) | ✅ current | The signed acceptance record — **and what was deliberately not done.** |
 | [docs/specs/turn-ledger-flight-failures.md](docs/specs/turn-ledger-flight-failures.md) | ✅ current | The three defects real flights found that green tests missed. |
+| [docs/STATE.md](docs/STATE.md) | ⚠️ stale numbers, current reasoning | Its **key decisions** and **honest limits** sections are still the best record of *why* things are the way they are. Its "57 tools / 276 tests" header is stale. |
+| [docs/CHECKLIST.md](docs/CHECKLIST.md) | 🗄️ historical | The build record through 2026-07-16. The ticks are real; the header counts are stale. |
 | [docs/COCKPIT_DESIGN.md](docs/COCKPIT_DESIGN.md) | reference | Workbench design intent. |
+| [docs/ROADMAP.md](docs/ROADMAP.md) · [docs/WORK_SESSION.md](docs/WORK_SESSION.md) | 🗄️ archived | Superseded planning. **Do not act on their "NEXT STEP".** |
 
 ## Honest summary
 

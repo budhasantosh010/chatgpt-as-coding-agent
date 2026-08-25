@@ -1,3 +1,14 @@
+> ## 🗄️ Status: ARCHIVED — superseded planning, do not act on it
+>
+> This roadmap was written 2026-07-15, before the Workbench, Run Contracts, the
+> Turn Ledger and evidence validation existed. It is kept for the *reasoning*
+> behind decisions that are now settled (notably why t3code was never forked).
+>
+> **Do not execute anything in this file.** For what is actually left, see
+> "Descoped, not done" in [specs/four-controls-progress.md](specs/four-controls-progress.md).
+>
+> Current docs: [AGENTS.md](../AGENTS.md) · [USING-THE-HARNESS.md](USING-THE-HARNESS.md)
+
 # Roadmap — what gets built, in what order, and why (v2, corrected 2026-07-15)
 
 v1 of this file was cross-examined by GPT; its critique was verified against the

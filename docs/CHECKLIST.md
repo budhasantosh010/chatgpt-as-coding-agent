@@ -1,3 +1,17 @@
+> ## 🗄️ Status: historical build record — the ticks are real, the counts are not
+>
+> This is the execution list from the original build, completed 2026-07-16. Every
+> ticked box was really built and tested at the time. The header's **57 tools /
+> 276 tests** is stale: the build is now **68 tools / 477 tests** (2026-08-25),
+> and phases beyond this list (Run Contracts, the Turn Ledger, evidence
+> validation, Phase 9) were built afterwards and are recorded in
+> [specs/four-controls-progress.md](specs/four-controls-progress.md).
+>
+> **Do not treat an unticked box here as outstanding work** without checking that
+> doc first.
+>
+> Current docs: [AGENTS.md](../AGENTS.md) · [USING-THE-HARNESS.md](USING-THE-HARNESS.md)
+
 # THE CHECKLIST — ✅ ALL PHASES DONE (built 2026-07-16)
 
 **Status: complete.** 57 MCP tools · 276 tests passing · cockpit driven live in a

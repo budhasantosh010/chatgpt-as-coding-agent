@@ -1,7 +1,21 @@
-# Project state & handoff
+> ## ⚠️ Status: stale numbers, current reasoning — read this first
+>
+> The header below says **57 tools / 276 tests**. The build is now **68 tools /
+> 477 tests** (2026-08-25). Treat every count in this file as historical.
+>
+> **What is still worth reading here, and is not repeated anywhere else:** the
+> **Key decisions (don't relitigate)** section and the **Honest limits** section.
+> They are the record of *why* the system is shaped the way it is.
+>
+> Current docs: [AGENTS.md](../AGENTS.md) for coding agents ·
+> [docs/USING-THE-HARNESS.md](USING-THE-HARNESS.md) for operators ·
+> [README.md](../README.md) for the doc ranking.
 
-Single source of truth for what this is, how it's built, what's done, and what's
-next. Read this first when resuming work.
+# Project state & handoff (2026-07-15 era)
+
+Was the single source of truth when written. It is no longer that — see the
+banner above — but its architecture notes, key decisions and honest limits are
+still accurate.
 
 ## What it is
 

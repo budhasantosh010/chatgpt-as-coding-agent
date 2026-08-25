@@ -1,3 +1,13 @@
+> ## 🗄️ Status: ARCHIVED — a finished session's scratchpad, do NOT resume it
+>
+> This file describes an active work session from **2026-07-16**. That work
+> finished long ago. Its "Resume protocol" and "NEXT STEP" are dead: following
+> them will send you to a plan that has already shipped.
+>
+> **If you are an agent resuming work, read [AGENTS.md](../AGENTS.md) instead.**
+>
+> Kept only as a record of how that session was run.
+
 # Active Work Session - Codex-style Harness Workbench
 
 **Last updated:** 2026-07-16 18:07 Asia/Dubai (Codex)
