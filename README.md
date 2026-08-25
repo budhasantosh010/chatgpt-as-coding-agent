@@ -220,7 +220,9 @@ doors can be open at once — use whichever the network allows today.
    connector is bound to one URL *and caches its tool menu per URL* (see the
    trap above), so a rotating URL means rebuilding the connector daily. Free
    accounts get one reserved domain.
-2. `winget install ngrok.ngrok` then `ngrok config add-authtoken <token>`.
+2. `winget install --id Ngrok.Ngrok --exact` then
+   `ngrok config add-authtoken <token>`. **Do not run `ngrok update`** — see the
+   Defender note in [§11](#11-troubleshooting).
 3. Put the bare hostname in `.env`:
    ```
    HARNESS_PUBLIC_HOST=your-name.ngrok-free.dev
@@ -636,6 +638,7 @@ this order — guessing costs more than checking.
 | ④ | `tailscale status` → `Logged out` / `NoState` | This network blocks Tailscale: public/guest Wi-Fi and some hotspots filter VPN control endpoints by TLS SNI and silently drop them. Signature: TCP connects, TLS handshake times out. | **Nothing fixes Tailscale here.** Use the [ngrok door](#the-second-door--ngrok-for-networks-that-block-tailscale) instead, or a different network. |
 | ⑤ | ngrok says "online", ChatGPT gets 403 | The engine started **before** `HARNESS_PUBLIC_HOST` was set. Config is read at startup only. | `stop-harness.bat`, `start-harness.bat`. Confirm with `python -m harness doctor` → *second public door*. |
 | ⑥ | ngrok returns an HTML page, not JSON | The free-tier browser interstitial answered instead of the harness | `check-ngrok.ps1` prints the three fixes. Simplest: use the funnel door. |
+| ⑦ | `ngrok` fails with *"the file contains a virus or potentially unwanted software"* | Windows Defender flags the **current** ngrok release (3.39.11) as `Trojan:Win32/Kepavll!rfn` and quarantines it mid-`ngrok update`, leaving the PATH shim pointing at a blocked file. Almost certainly a heuristic hit on a tunnelling tool — but unverifiable, because Defender blocks reading the file to check its signature. | Stay on the winget build: `winget install --id Ngrok.Ngrok --exact --force`. It is 3.3.1, validly signed by *ngrok, Inc.* (DigiCert), and supports `--domain`. **Never run `ngrok update`.** |
 
 > **The trap that fooled us once:** probing your own `*.ts.net` name from your own
 > machine returns HTTP 200 even when the public path is dead — MagicDNS answers

@@ -7,8 +7,16 @@
 # open at once: they are two roads to the same localhost:8848, so the same
 # tasks, workspaces, evidence and files are behind either one.
 #
+# DO NOT RUN `ngrok update`. On this machine Windows Defender flags the current
+# ngrok release (3.39.11) as Trojan:Win32/Kepavll!rfn, severity 5, and quarantines
+# it mid-update -- which leaves the PATH shim pointing at a blocked file and
+# ngrok unusable. The winget build (3.3.1) carries a valid Authenticode
+# signature from "ngrok, Inc." (DigiCert) and supports --domain, which is all
+# this needs. Repair after an accidental update:
+#     winget install --id Ngrok.Ngrok --exact --force
+#
 # One-time prerequisites:
-#   - ngrok installed            (winget install ngrok.ngrok)
+#   - ngrok installed            (winget install --id Ngrok.Ngrok --exact)
 #   - ngrok authtoken configured (ngrok config add-authtoken <token>)
 #   - a RESERVED domain claimed in the ngrok dashboard, and that hostname set
 #     as HARNESS_PUBLIC_HOST in .env
@@ -37,7 +45,7 @@ if (-not $publicHost) {
 if (-not (Get-Command ngrok -ErrorAction SilentlyContinue)) {
     Write-Host "X  ngrok is not installed (or not on PATH)." -ForegroundColor Yellow
     Write-Host ""
-    Write-Host "   Install it:      winget install ngrok.ngrok"
+    Write-Host "   Install it:      winget install --id Ngrok.Ngrok --exact"
     Write-Host "   Then sign in:    ngrok config add-authtoken <token from dashboard>"
     Write-Host ""
     Write-Host "   Open a NEW terminal after installing so PATH refreshes."
