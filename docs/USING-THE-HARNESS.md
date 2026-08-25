@@ -170,8 +170,13 @@ install ngrok, put the bare hostname in `.env` as `HARNESS_PUBLIC_HOST=`,
 restart the engine, then add the second URL from `python -m harness url` as its
 **own** ChatGPT connector. Full steps: README §2, *The second door*.
 
-**Daily:** `start-harness.bat`, then `start-ngrok.bat`. You end up with two
-connectors in ChatGPT and pick whichever the network allows today.
+**Daily:** on a network that blocks Tailscale, double-click **`start-ngrok.bat`
+on its own** — it starts the engine itself and never calls Tailscale. (Do not
+reach for `start-harness.bat` there: its step 1 gates on `tailscale status` and
+will stop before the engine ever starts.) To have both doors open on a good
+network, run `start-harness.bat` first, then `start-ngrok.bat`.
+
+You end up with two connectors in ChatGPT and pick whichever works today.
 
 ### Step 1 — Tailscale must be logged in
 
@@ -276,7 +281,8 @@ and Claude Code. Isolated copies are opt-in (§8).
 
 ```
 1-4. double-click start-harness.bat   (or run the four steps in §4 by hand)
-4b.  double-click start-ngrok.bat     (ONLY if this network blocks Tailscale)
+4b.  OR double-click start-ngrok.bat   (if Tailscale is blocked - starts the
+                                       engine itself, no Tailscale needed)
 5. Workbench: [＋] add project (first time only)
 6. ChatGPT:   "Open <path> and start a task: <goal>"
 7. ...code, chat, iterate...

@@ -235,10 +235,15 @@ doors can be open at once — use whichever the network allows today.
 5. `python -m harness url` now prints both URLs. Add the ngrok one as its **own**
    ChatGPT connector — a connector cannot be re-pointed at a different URL.
 
-**Daily:** `start-harness.bat`, then `start-ngrok.bat`. The second script refuses
-to pretend: it checks the engine is listening, starts the tunnel on your reserved
-domain, then sends a real MCP `initialize` down the public path and tells you
-which of the four ngrok-specific failures happened if it doesn't come back.
+**Daily:** double-click **`start-ngrok.bat`** — that is the whole thing. It is a
+standalone path that never touches Tailscale, which matters because
+`start-harness.bat` gates on `tailscale status` and would refuse to start the
+engine at all on the networks this exists for. It starts the engine if it isn't
+already up (and reuses it if it is), opens the tunnel, then sends a real MCP
+`initialize` down the public path and names which failure happened if it doesn't
+come back.
+
+Want both doors open? Run `start-harness.bat` first, then `start-ngrok.bat`.
 
 > **Known risk, not yet observed here:** ngrok's free tier serves a browser
 > interstitial to clients it thinks are browsers. ChatGPT can't click through

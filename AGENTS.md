@@ -115,8 +115,11 @@ What the operator actually double-clicks:
 ```
 start-harness.bat     tailscale check -> funnel -> engine (:8848 + :8849) -> verify
 stop-harness.bat      funnel down, then kill whatever listens on 8848 / 8849
-start-ngrok.bat       OPTIONAL second door: engine check -> ngrok -> verify
-                      (for networks that block Tailscale; run after start-harness)
+start-ngrok.bat       STANDALONE ngrok path: engine (start or reuse) -> ngrok
+                      -> verify. Never calls Tailscale, deliberately:
+                      start-harness.bat gates on `tailscale status`, so on a
+                      network that blocks Tailscale it refuses before the
+                      engine ever starts. Run both for two doors at once.
 ```
 
 Two tunnels, one engine. `scripts/check-funnel.ps1` and `scripts/check-ngrok.ps1`
