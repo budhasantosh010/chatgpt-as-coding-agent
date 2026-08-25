@@ -8,7 +8,15 @@ version = "0.1.0"
 description = "A local MCP coding server driven by ChatGPT — ChatGPT is the brain, this is the hands."
 requires-python = ">=3.11"
 dependencies = [
-    "mcp>=1.26",
+    # Upper bound is load-bearing, not caution. mcp 2.0 REMOVED
+    # `mcp.server.fastmcp`, which harness/server.py imports, so an unbounded
+    # `mcp>=1.26` resolves to 2.x on any clean install and every test collapses
+    # with ModuleNotFoundError. That is exactly what happened: CI was red from
+    # 2026-07-28 to 2026-08-25 while local runs stayed green, because the local
+    # venv had 1.26.0 pinned by nothing but luck. Verified by bisect: fastmcp
+    # is present through 1.29.1 and absent in 2.1.0.
+    # Lifting this bound means porting server.py to the 2.x API first.
+    "mcp>=1.26,<2",
     "uvicorn>=0.30",
     "starlette>=0.40",
     "anyio>=4.0",

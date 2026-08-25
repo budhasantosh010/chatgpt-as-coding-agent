@@ -1,6 +1,7 @@
 # Runtime dependencies. Install with:  python -m pip install -r requirements.txt
 # (or just `python -m pip install .` which reads pyproject.toml)
-mcp>=1.26
+# <2 is load-bearing: mcp 2.0 removed mcp.server.fastmcp. See pyproject.toml.
+mcp>=1.26,<2
 uvicorn>=0.30
 starlette>=0.40
 anyio>=4.0

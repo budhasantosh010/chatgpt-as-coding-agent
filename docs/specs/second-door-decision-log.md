@@ -826,3 +826,79 @@ it: **after any change to how the outside world reaches this harness, fly it.**
 ChatGPT's diagram was right about state and wrong about code, and the wrong part
 was invisible until someone read `middleware.py`. When a claim says nothing
 changes, that is the moment to go and look.
+
+---
+
+## 16. Addendum — CI had been red for a month, and nobody knew
+
+Found on 2026-08-25 while confirming that pushing a side branch costs no CI
+minutes. It is recorded here because it is the same lesson as §15.3 wearing a
+different hat.
+
+### D27 — Bound the `mcp` dependency, rather than trusting a floor
+
+```
+   The symptom     Every GitHub Actions run since 2026-07-28 FAILED. Six in a
+                   row, both OS matrix legs, always in under a minute:
+                       ModuleNotFoundError: No module named 'mcp.server.fastmcp'
+                   Meanwhile `pytest tests -q` was green on the laptop, every
+                   single time, all 484 of them.
+
+   The cause       pyproject declared  "mcp>=1.26"  with NO UPPER BOUND.
+                   mcp 2.0 REMOVED mcp.server.fastmcp, which harness/server.py
+                   imports. So:
+                       laptop  -> already had 1.26.0 installed -> green
+                       CI      -> clean install -> resolves 2.x -> everything dies
+
+                   The local venv was correct by accident. Nothing pinned it;
+                   it simply had not been upgraded.
+
+   Decided         "mcp>=1.26,<2" in pyproject.toml and requirements.txt, with
+                   the reason written in-line so the bound is not "tidied up"
+                   by someone who reads upper bounds as timidity.
+   Instead of      (a) mcp==1.26.0 exactly -- needlessly rigid; 1.27-1.29 are
+                       fine and proven so below.
+                   (b) Porting server.py to the mcp 2.x API -- a real piece of
+                       work, and not one to start while confirming a push.
+   Verified        By bisect in a throwaway venv, not by reading changelogs:
+                       mcp 1.27.0  -> fastmcp OK
+                       mcp 1.29.1  -> fastmcp OK
+                       mcp 2.1.0   -> ModuleNotFoundError
+                   Then by simulating CI exactly: fresh venv, `pip install -e
+                   .[dev]`, `python -m pytest tests -q`.
+                       resolved mcp == 1.29.1   (NEWER than the laptop's 1.26.0)
+                       484 passed
+                   That second step mattered: the pin moves the project onto a
+                   version it had never actually run on. Pinning without running
+                   the suite would have swapped one unknown for another.
+   Lives in        pyproject.toml, requirements.txt
+```
+
+### Why this went unnoticed for a month
+
+```
+   The laptop is the place work happens, and it was green.
+   CI is the place truth happens, and nobody looked.
+
+   Both were honest. They disagreed because they were installing
+   DIFFERENT SOFTWARE, and nothing in the repo forced them to agree.
+```
+
+### The lesson, which is §15.3 again in a new costume
+
+**"It works on my machine" and "it works" differ by whatever your environment
+happens to be pinned to.** An unbounded dependency means your laptop and your CI
+are running different programs, and the one you never look at is the one telling
+the truth.
+
+Same shape as the flight lesson: a green signal proves whatever it actually
+measured, which is never quite the thing you assumed. The fix in both cases is
+the same — **go and look at the real thing**.
+
+```
+   2026-07-24   the fork bug          green suite, broken in flight
+   2026-07-28   F1 / F2               green suite, broken in flight
+   2026-07-29   F3                    green suite, broken in flight
+   2026-08-25   ngrok version + AV    green suite, blocked outside the process
+   2026-08-25   mcp 2.0 unpinned      green LAPTOP, red CI, for a month   <- new
+```
