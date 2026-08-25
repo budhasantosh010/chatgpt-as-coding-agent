@@ -19,7 +19,9 @@ subscription you already pay for.
 > architecture rule, and which docs are stale.
 
 **Status:** all phases complete and signed (2026-07-29). 68 tools, **484 tests
-green**, flown end to end on a real project.
+green**, flown end to end on a real project. The **ngrok second door** was added
+and flown on 2026-08-25 — ChatGPT created and read back a real file through it
+([decision log](docs/specs/second-door-decision-log.md)).
 
 **In daily use since.** The operator has run it against **multiple real projects**
 from 2026-07-29 to 2026-08-25 with no outstanding defects reported — their words:
@@ -683,6 +685,8 @@ outranks a current one. The same ranking is repeated in
 | [docs/COMPARISON.md](docs/COMPARISON.md) | ⚠️ stale (2026-07-16) | Historical detail and sources. It predates the Turn Ledger, Run Contracts and the signed flight. The current comparison is §12 of the doc above. |
 | [docs/specs/four-controls-progress.md](docs/specs/four-controls-progress.md) | ✅ current | The signed acceptance record — **and what was deliberately not done.** |
 | [docs/specs/turn-ledger-flight-failures.md](docs/specs/turn-ledger-flight-failures.md) | ✅ current | The three defects real flights found that green tests missed. |
+| [docs/specs/second-door-decision-log.md](docs/specs/second-door-decision-log.md) | ✅ current | **Every decision behind the ngrok second door**, with the alternative rejected and what breaks without it. Read before changing host handling, the tunnel scripts, or the launchers. |
+| [docs/specs/ngrok-defender-deadlock.md](docs/specs/ngrok-defender-deadlock.md) | ✅ current | The two install blockers (ngrok's version floor, Defender's false positive) and the order they were settled in. |
 | [docs/STATE.md](docs/STATE.md) | ⚠️ stale numbers, current reasoning | Its **key decisions** and **honest limits** sections are still the best record of *why* things are the way they are. Its "57 tools / 276 tests" header is stale. |
 | [docs/CHECKLIST.md](docs/CHECKLIST.md) | 🗄️ historical | The build record through 2026-07-16. The ticks are real; the header counts are stale. |
 | [docs/COCKPIT_DESIGN.md](docs/COCKPIT_DESIGN.md) | reference | Workbench design intent. |

@@ -73,6 +73,12 @@ permission to refactor.
        widen the host check to a *.ngrok-free.dev wildcard -- that suffix is
        shared with every other ngrok tenant.
 
+       Every decision behind it, and the alternative each one rejected, is in
+       docs/specs/second-door-decision-log.md. Read it before touching
+       middleware host handling, the tunnel scripts, or the .bat launchers --
+       several of those choices look like inconsistencies worth cleaning up
+       and are not.
+
  [X] NEVER use https or gh for the git remote. SSH ONLY.
        origin = git@github.com:budhasantosh010/chatgpt-as-coding-agent.git
 
