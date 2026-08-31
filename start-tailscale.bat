@@ -75,7 +75,11 @@ if %_tries% GEQ 30 (
     pause
     exit /b 1
 )
-timeout /t 1 /nobreak >nul
+REM  ping, not `timeout`: timeout reads the console directly and dies with
+REM  "Input redirection is not supported" whenever stdin is not a real console
+REM  (scripted runs, CI, piped invocations). The wait still worked, but it
+REM  printed four lines of red ERROR text that look like a real failure.
+ping -n 2 127.0.0.1 >nul
 goto waitloop
 :engineup
 echo.
@@ -86,8 +90,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\funnel.ps1"
 if errorlevel 1 (
     echo.
     echo  X  The funnel did not start. Try re-registering it:
-    echo        tailscale funnel --https=443 off
+    echo        tailscale funnel reset
     echo        tailscale funnel --bg 8848
+    echo.
+    echo     Note: `tailscale funnel ^<port^> off` no longer exists. Tailscale's
+    echo     own output still suggests an "off" form - ignore it, use reset.
     echo.
     pause
     exit /b 1

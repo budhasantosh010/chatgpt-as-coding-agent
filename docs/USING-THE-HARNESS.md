@@ -1663,3 +1663,61 @@ ChatGPT connector never needs rebuilding.
 
 Ending state: one engine, one ngrok agent, both doors returning a real MCP
 handshake, `diagnose.bat` green.
+
+### Addendum — two more things, found after §23 was written
+
+**`timeout` cannot be used in the engine-wait loop.** `timeout /t 1 /nobreak`
+reads the console directly and aborts with *"Input redirection is not
+supported"* whenever stdin is not a real console — scripted runs, CI, anything
+piped. The loop still worked, but it printed four lines of red `ERROR` text that
+look exactly like a real failure. Replaced with `ping -n 2 127.0.0.1 >nul`,
+which is redirect-safe. Verified side by side in an isolated batch file:
+`timeout` errors, `ping` does not.
+
+A double-click never hit this. It only appears when a *script* runs the
+launcher — which is to say, it only ever lied to the person testing it.
+
+**Tailscale's own suggested "off" command is also stale.** When the funnel
+starts, Tailscale prints `To disable the proxy, run: tailscale funnel
+--https=443 off`. That spelling is as dead as the one in §23. Use
+`tailscale funnel reset`. The stale hint inside `start-tailscale.bat` was
+corrected too.
+
+### Known issue, unresolved: Tailscale daemon stuck in `NoState`
+
+During this testing the Tailscale backend wedged:
+
+```
+  tailscale status        # Health check:
+                          #   - Tailscale is starting. Please wait.
+                          unexpected state: NoState
+
+  BackendState  NoState        TailscaleIPs  null
+  HaveNodeKey   true           AuthURL       ""      <- not a logout
+  Service       Running                              <- not a crash
+```
+
+`HaveNodeKey: true` with no `AuthURL` means it is **not** logged out and does
+not need re-authentication. The service is running. The backend simply never
+finished starting. Neither `tailscale up` (exit 0, no output) nor
+`tailscale down` + `up` cleared it.
+
+**Honest note on cause:** this appeared during a session that ran
+`tailscale funnel reset` and `tailscale funnel --bg 8848` repeatedly while
+testing the stop/start pair. That is not proof it was the trigger, and the
+mechanism is unknown — but it is the obvious correlation and is recorded rather
+than quietly omitted.
+
+The fix needs an elevated service restart, which is an operator action:
+
+```
+  Run PowerShell as Administrator:
+      Restart-Service Tailscale
+  Then:  tailscale status        (expect BackendState "Running")
+         start-tailscale.bat
+```
+
+**The ngrok door carried the whole load throughout.** With Tailscale completely
+dead, `diagnose.bat` reported `WORKING - ChatGPT can connect (ngrok)` and the
+harness stayed usable. That is precisely the scenario the second door was built
+for — and the first time it has been needed for real rather than rehearsed.
