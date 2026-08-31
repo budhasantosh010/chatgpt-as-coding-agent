@@ -410,7 +410,7 @@ satisfy by being generous with yourself is not a gate.
 ```
    Decided        A separate stop script that touches nothing but ngrok
                   processes.
-   Instead of     Extending stop-harness.bat.
+   Instead of     Extending stop-tailscale.bat.
    Why            Requirement 2: do not disturb Tailscale. Closing both doors
                   when the operator asked to close one is exactly that.
    Lives in       scripts/stop-ngrok.ps1
@@ -476,8 +476,8 @@ before it cost a session.
    THE BUG
    -------
    start-ngrok.bat  required the engine to already be running.
-   The only launcher that starts the engine is start-harness.bat.
-   start-harness.bat  step 1/4 is:  `tailscale status` -- and it STOPS if
+   The only launcher that starts the engine is start-tailscale.bat.
+   start-tailscale.bat  step 1/4 is:  `tailscale status` -- and it STOPS if
                       Tailscale is not logged in.
 
    So:
@@ -485,7 +485,7 @@ before it cost a session.
      network blocks Tailscale
             |
             v
-     start-harness.bat refuses at step 1  ->  engine never starts
+     start-tailscale.bat refuses at step 1  ->  engine never starts
             |
             v
      start-ngrok.bat sees no engine        ->  refuses
@@ -497,7 +497,7 @@ before it cost a session.
 ```
    Decided        start-ngrok.bat starts the engine itself if it isn't
                   listening, reuses it if it is, and never calls Tailscale.
-   Instead of     (a) Making start-harness.bat continue past a Tailscale
+   Instead of     (a) Making start-tailscale.bat continue past a Tailscale
                       failure -- invasive surgery on a file that works.
                   (b) A third launcher -- more things to explain.
    Why            It makes the ngrok path genuinely standalone, which is what

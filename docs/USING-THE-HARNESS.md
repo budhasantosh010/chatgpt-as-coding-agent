@@ -133,10 +133,10 @@ unlike Codex Cloud, which works on a copy in OpenAI's sandbox.
 
 ## 4. Starting it — every time, in order
 
-### The short way: double-click `start-harness.bat`
+### The short way: double-click `start-tailscale.bat`
 
 It runs all four steps below in order and **stops at the first failure with the
-actual fix on screen**. `stop-harness.bat` shuts it down again (tunnel first,
+actual fix on screen**. `stop-tailscale.bat` shuts it down again (tunnel first,
 then the engine).
 
 The long way is below, because when the `.bat` stops you need to know what it
@@ -172,9 +172,9 @@ restart the engine, then add the second URL from `python -m harness url` as its
 
 **Daily:** on a network that blocks Tailscale, double-click **`start-ngrok.bat`
 on its own** — it starts the engine itself and never calls Tailscale. (Do not
-reach for `start-harness.bat` there: its step 1 gates on `tailscale status` and
+reach for `start-tailscale.bat` there: its step 1 gates on `tailscale status` and
 will stop before the engine ever starts.) To have both doors open on a good
-network, run `start-harness.bat` first, then `start-ngrok.bat`.
+network, run `start-tailscale.bat` first, then `start-ngrok.bat`.
 
 You end up with two connectors in ChatGPT and pick whichever works today.
 
@@ -280,7 +280,7 @@ and Claude Code. Isolated copies are opt-in (§8).
 ## 6. The daily loop
 
 ```
-1-4. double-click start-harness.bat   (or run the four steps in §4 by hand)
+1-4. double-click start-tailscale.bat   (or run the four steps in §4 by hand)
 4b.  OR double-click start-ngrok.bat   (if Tailscale is blocked - starts the
                                        engine itself, no Tailscale needed)
 5. Workbench: [＋] add project (first time only)
@@ -814,7 +814,7 @@ completely different causes and completely different fixes. Diagnose in order.
    Symptom: check-ngrok.ps1 → "HTTP 403 ... host not allowed"
    Cause:   the engine was started BEFORE HARNESS_PUBLIC_HOST was set.
             Config is read at startup only.
-   Fix:     stop-harness.bat, then start-harness.bat.
+   Fix:     stop-ngrok.bat AND stop-tailscale.bat, then start the door you want.
             Confirm: python -m harness doctor → "second public door"
 
 ⑥ NGROK RETURNS A WEB PAGE INSTEAD OF JSON
@@ -1053,10 +1053,10 @@ An exclusion hiding an *unverified* binary is worse than the block it removed.
 ```
 
 It starts the engine itself and **never calls Tailscale**, so it works on the
-networks that break the funnel. (Do not reach for `start-harness.bat` there —
+networks that break the funnel. (Do not reach for `start-tailscale.bat` there —
 its step 1 gates on `tailscale status` and stops before the engine ever starts.)
 
-Want both doors on a good network? `start-harness.bat`, then `start-ngrok.bat`.
+Want both doors on a good network? `start-tailscale.bat`, then `start-ngrok.bat`.
 
 To close just this door: `.\scripts\stop-ngrok.ps1` — the funnel is untouched.
 
@@ -1170,7 +1170,7 @@ No crash. Checked and ruled out:
 ```
 
 The engine runs in a console window. **Closing that window kills the harness.**
-`stop-harness.bat` does the same thing deliberately. There is no service, no
+`stop-tailscale.bat` does the same thing deliberately. There is no service, no
 auto-restart, and no supervisor — by design, but it means the harness is exactly
 as alive as its window.
 
@@ -1343,10 +1343,10 @@ The failure path is the part that matters, and you can exercise it for real:
 
 ```
   1. diagnose.bat            -> expect both doors WORKING
-  2. stop-harness.bat        -> stops the engine, LEAVES ngrok running
+  2. stop-tailscale.bat        -> stops the engine, LEAVES ngrok running
   3. diagnose.bat            -> expect ENGINE IS DOWN, and the doors
                                 reporting 502 rather than a timeout
-  4. start-harness.bat       -> back up
+  4. start-tailscale.bat       -> back up
   5. diagnose.bat            -> WORKING again
 ```
 
@@ -1553,3 +1553,113 @@ held to, now applied to its tools.
 
 Seventh entry in the flight-lesson list, and the first where a green flight was
 itself the thing that missed the bug.
+
+---
+
+## 23. Four files, one per door per direction
+
+*Added 2026-08-31. Nothing above this line was changed or removed.*
+
+The operator asked for the simplest possible surface: **click a file, it does
+everything.** One start and one stop per door, nothing else to remember.
+
+```
+  start-tailscale.bat     open the Tailscale door
+  stop-tailscale.bat      close it
+
+  start-ngrok.bat         open the ngrok door
+  stop-ngrok.bat          close it
+
+  diagnose.bat            "is it working?"   read-only, safe any time
+```
+
+`start-harness.bat` and `stop-harness.bat` are gone — renamed to the
+`-tailscale` pair. They were never "the harness", they were the Tailscale door,
+and the old name implied that stopping Tailscale stopped everything.
+
+### The rule that makes two stop files safe
+
+There is **one engine behind both doors**. So a stop file that always killed the
+engine would silently kill the *other* door too:
+
+```
+  ngrok open, Tailscale open
+        |
+        +-- stop-tailscale.bat  ... also kills the engine?
+                                    then ngrok dies too, for no reason,
+                                    and presents as "both doors dead" --
+                                    the exact fault section 19 is about
+```
+
+So: **the engine is stopped by the LAST door to close, never the first.**
+
+```
+  close one door, other still open   ->  engine stays up  (says so on screen)
+  close the last door                ->  engine stops with it
+```
+
+That lives in `scripts/engine-stop-if-idle.ps1`, shared by both stop files, so
+the two can never disagree.
+
+Each start file is the mirror: it starts the engine if it is not running and
+**reuses it if it is**, so opening the second door never disturbs the first.
+
+`start-tailscale.bat` also now starts the engine *before* opening the funnel.
+A funnel opened over a dead engine answers 502 — which reads as a broken tunnel
+and sends you debugging the one part that was fine.
+
+### The bug this cleanup uncovered
+
+Testing `stop-tailscale.bat` produced this:
+
+```
+  Turning off Tailscale Funnel for port 8848 ...
+  Error: the CLI for serve and funnel has changed.
+  Done. The public URL is no longer reachable.      <-- A LIE
+```
+
+`tailscale funnel <port> off` **was removed from the Tailscale CLI.** The old
+`stop-funnel.ps1` ran it, ignored the non-zero exit, and printed "Done" anyway.
+
+**The funnel stayed open every single time anyone ran the old stop script.**
+
+This is the worst class of bug in a stop script: it hands you a false belief
+about the state of a *public entrance to your machine*. You think the door is
+shut. It is not.
+
+It also produced a beautifully confusing second-order effect. The lie flowed
+into `engine-stop-if-idle.ps1`, which saw a funnel still marked "on", and
+therefore **correctly** declined to stop the engine. A correct decision, from a
+correct rule, fed a false input — which is the hardest kind of fault to trace,
+because every component you inspect looks right.
+
+Fixed two ways:
+
+```
+  1. `tailscale funnel reset`   -- the current spelling
+  2. VERIFY, then report        -- re-read the status and only claim
+                                   success if the funnel is actually off
+```
+
+**A stop script that cannot prove it stopped anything is just a hopeful
+message.** Every stop path now checks and says so.
+
+### The URL does not change
+
+Worth stating plainly, because `reset` sounds destructive. The funnel hostname
+is a property of the tailnet, not of the funnel config, and `funnel.ps1`
+recreates exactly the same mapping. Verified by round-trip: closed, reopened,
+and the same `desktop-fdce9ak.taila47816.ts.net` URL came back working. Your
+ChatGPT connector never needs rebuilding.
+
+### All four flown
+
+| File | State it was run from | Result |
+|---|---|---|
+| `stop-ngrok.bat` | both doors open | ngrok closed, **engine left up** |
+| `stop-tailscale.bat` | last door open | funnel closed **and verified**, engine stopped |
+| `start-tailscale.bat` | everything stopped | engine + funnel up, **same URL** |
+| `start-ngrok.bat` | engine already running | **reused** the engine, ngrok up |
+
+Ending state: one engine, one ngrok agent, both doors returning a real MCP
+handshake, `diagnose.bat` green.

@@ -1,19 +1,23 @@
 @echo off
 REM ============================================================================
-REM  Double-click this to run the harness through ngrok INSTEAD OF Tailscale.
+REM  START THE NGROK DOOR.  Double-click. That is the whole thing.
 REM
-REM  This is a complete standalone path. It never touches Tailscale, so it
-REM  works on the exact networks that break the funnel -- which is the whole
-REM  reason it exists. start-harness.bat gates on `tailscale status` and would
-REM  refuse to start the engine at all on such a network.
+REM  Starts the engine (or reuses it if already running), then opens the ngrok
+REM  tunnel, then PROVES ChatGPT can actually get through.
 REM
-REM  If the engine is already running (from start-harness.bat), this reuses it
-REM  and just adds the second door. Both tunnels can be open at once: two roads
-REM  to one localhost:8848, so the same tasks, files and evidence sit behind
-REM  either one and switching networks mid-task migrates nothing.
+REM  This NEVER touches Tailscale, deliberately. It exists for the networks
+REM  that block Tailscale, and start-tailscale.bat refuses to start at all on
+REM  those -- so if this file called it, the one door that still works would
+REM  be unopenable on exactly the networks it was built for.
 REM
-REM  stop-harness.bat shuts the engine down. stop-ngrok.ps1 closes just this
-REM  door and leaves the funnel alone.
+REM  Safe to run when the Tailscale door is already open: both doors lead to
+REM  the same engine, so this just adds a second way in.
+REM
+REM  ngrok is NOT a service. It does not survive a reboot, so run this again
+REM  after one. Your URL never changes.
+REM
+REM  To close it:  stop-ngrok.bat
+REM  If ChatGPT stops connecting:  diagnose.bat
 REM ============================================================================
 setlocal
 cd /d "%~dp0"
@@ -21,7 +25,7 @@ title Harness - ngrok
 
 echo.
 echo  ================================================
-echo   HARNESS - starting via ngrok
+echo   HARNESS - starting the NGROK door
 echo  ================================================
 echo.
 
@@ -35,7 +39,7 @@ if not errorlevel 1 (
     goto engineup
 )
 
-REM  Its own window, so closing this one does not kill the engine, and the
+REM  Its own window, so closing THIS window does not kill the engine, and the
 REM  engine's log stays readable instead of scrolling past the health check.
 echo        not running - starting it
 start "Harness engine" cmd /k "cd /d "%~dp0" && python -m harness up"
@@ -51,7 +55,7 @@ if %_tries% GEQ 30 (
     echo.
     echo  X  The engine never came up. Look at the "Harness engine" window.
     echo     A [Errno 10048] there means an old engine still holds the port.
-    echo     Run stop-harness.bat first, then try again.
+    echo     Run stop-ngrok.bat and stop-tailscale.bat first, then try again.
     echo.
     pause
     exit /b 1
@@ -83,9 +87,9 @@ if errorlevel 1 (
     echo.
     echo  X  Not usable yet. The check above names the cause.
     echo.
-    echo     Still stuck? Run  diagnose.bat  - it checks outward from the
-    echo     engine and names the broken part. A 502 there means the tunnel
-    echo     is FINE and the engine is down; do not reconfigure the tunnel.
+    echo     Run  diagnose.bat  - it checks outward from the engine and names
+    echo     the broken part. A 502 there means the tunnel is FINE and the
+    echo     engine is down; do not reconfigure the tunnel.
     echo.
     pause
     exit /b 1
@@ -93,7 +97,7 @@ if errorlevel 1 (
 
 echo.
 echo  ================================================
-echo   READY - via ngrok
+echo   READY - ngrok door is open
 echo.
 echo   Workbench :  http://127.0.0.1:8849
 echo   ChatGPT   :  paste the ngrok URL printed above
@@ -103,7 +107,7 @@ echo                menu per URL - it cannot be repointed.
 echo  ================================================
 echo.
 start "" http://127.0.0.1:8849
-echo  This window can be closed. The engine keeps running in its own window.
+echo  You can close THIS window. The engine keeps running in its own window.
 echo  Do NOT close the "Harness engine" window - that stops the harness, and
 echo  nothing restarts it. ngrok is not a service either: it does not survive
 echo  a reboot, so run this file again after one. If ChatGPT stops connecting,

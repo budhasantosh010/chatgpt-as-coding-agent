@@ -118,7 +118,7 @@ switch ($code) {
         Write-Host "`nThe harness REJECTED the ngrok hostname (403 host not allowed)." -ForegroundColor Yellow
         Write-Host "  This is the common one. The engine is running with config from"
         Write-Host "  before HARNESS_PUBLIC_HOST was set. Config is read at startup only."
-        Write-Host "  Fix:  stop-harness.bat  then  start-harness.bat"
+        Write-Host "  Fix:  stop-ngrok.bat AND stop-tailscale.bat, then start the door you want"
         Write-Host "  Verify with:  python -m harness doctor    (look for 'second public door')"
     }
     6 {

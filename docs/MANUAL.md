@@ -10,7 +10,7 @@
 >
 > | § | What changed since |
 > | --- | --- |
-> | §0 startup | `start-harness.bat` now does all four steps and checks the real public path |
+> | §0 startup | `start-tailscale.bat` now does all four steps and checks the real public path |
 > | §4–6 modes | All six modes are in the Workbench dropdown now, labelled, with the ceiling explained |
 > | §6 "you have no buttons here" | You do. The Workbench shows and sets the mode. |
 > | anywhere | Run Contracts, the Turn Ledger and server-validated evidence postdate this doc entirely |

@@ -69,13 +69,23 @@ ChatGPT  ──MCP over HTTPS──►  Tailscale Funnel  ──►  localhost:8
 ## 1. Quickstart — double-click one file
 
 ```
-start-harness.bat      ← starts everything
-stop-harness.bat       ← shuts it down
-start-ngrok.bat        ← optional second door, for networks that block Tailscale
-diagnose.bat           ← "why can't ChatGPT connect?" - read-only, safe anytime
+  TWO DOORS, ONE ENGINE.  Open either, or both.
+
+  start-tailscale.bat    open the Tailscale door
+  stop-tailscale.bat     close it
+
+  start-ngrok.bat        open the ngrok door  (for networks that block Tailscale)
+  stop-ngrok.bat         close it
+
+  diagnose.bat           "is it working?"  read-only, safe any time
 ```
 
-`start-harness.bat` runs the four steps that have to happen in order, and
+Each start file starts the engine if it is not already running, and reuses it
+if it is. Each stop file closes only its own door — **the engine is stopped by
+the LAST door to close**, never by the first, so closing one door can never
+knock out the other.
+
+`start-tailscale.bat` runs the four steps that have to happen in order, and
 **stops at the first failure with that failure's actual fix on screen**:
 
 ```
@@ -240,13 +250,13 @@ doors can be open at once — use whichever the network allows today.
 
 **Daily:** double-click **`start-ngrok.bat`** — that is the whole thing. It is a
 standalone path that never touches Tailscale, which matters because
-`start-harness.bat` gates on `tailscale status` and would refuse to start the
+`start-tailscale.bat` gates on `tailscale status` and would refuse to start the
 engine at all on the networks this exists for. It starts the engine if it isn't
 already up (and reuses it if it is), opens the tunnel, then sends a real MCP
 `initialize` down the public path and names which failure happened if it doesn't
 come back.
 
-Want both doors open? Run `start-harness.bat` first, then `start-ngrok.bat`.
+Want both doors open? Run `start-tailscale.bat` first, then `start-ngrok.bat`.
 
 > **Known risk, not yet observed here:** ngrok's free tier serves a browser
 > interstitial to clients it thinks are browsers. ChatGPT can't click through
@@ -641,10 +651,10 @@ this order — guessing costs more than checking.
 | # | Symptom | Cause | Fix |
 |---|---|---|---|
 | ① | Connects fine, but the tool count is wrong or a tool is "missing" | ChatGPT cached the tool menu for that connector URL | Rotate `secret_route.txt`, add a **brand new** connector. Editing the old one does nothing. |
-| ② | `mcp_network_error`; `[Errno 10048]` on startup | Engine not running, or a stale one still holds :8848/:8849 | `stop-harness.bat`, then `start-harness.bat` |
+| ② | `mcp_network_error`; `[Errno 10048]` on startup | Engine not running, or a stale one still holds :8848/:8849 | `stop-ngrok.bat AND stop-tailscale.bat, then start the door you want |
 | ③ | `check-funnel.ps1` fails, but `tailscale funnel status` says "Funnel on" | **It's lying** — it reads local config, not the actual ingress | `tailscale funnel --https=443 off; tailscale funnel --bg 8848` (URL doesn't change) |
 | ④ | `tailscale status` → `Logged out` / `NoState` | This network blocks Tailscale: public/guest Wi-Fi and some hotspots filter VPN control endpoints by TLS SNI and silently drop them. Signature: TCP connects, TLS handshake times out. | **Nothing fixes Tailscale here.** Use the [ngrok door](#the-second-door--ngrok-for-networks-that-block-tailscale) instead, or a different network. |
-| ⑤ | ngrok says "online", ChatGPT gets 403 | The engine started **before** `HARNESS_PUBLIC_HOST` was set. Config is read at startup only. | `stop-harness.bat`, `start-harness.bat`. Confirm with `python -m harness doctor` → *second public door*. |
+| ⑤ | ngrok says "online", ChatGPT gets 403 | The engine started **before** `HARNESS_PUBLIC_HOST` was set. Config is read at startup only. | `stop-ngrok.bat AND stop-tailscale.bat, then start the door you want`. Confirm with `python -m harness doctor` → *second public door*. |
 | ⑥ | ngrok returns an HTML page, not JSON | The free-tier browser interstitial answered instead of the harness | `check-ngrok.ps1` prints the three fixes. Simplest: use the funnel door. |
 | ⑦ | `ERR_NGROK_121`, reported as *"authentication failed"* | Not an authtoken problem. ngrok refuses free-tier agents below **3.20.0**, and `winget` only carries 3.3.1. | Install from ngrok's own CDN, not winget — and **verify the Authenticode signature before running it**. Full account in [docs/specs/ngrok-defender-deadlock.md](docs/specs/ngrok-defender-deadlock.md). |
 | ⑧ | `ngrok` fails with *"the file contains a virus or potentially unwanted software"* | Windows Defender flags 3.20+ as `Trojan:Win32/Kepavll!rfn`. On this machine that was a **verified false positive** — the binary carries a valid DigiCert **EV** signature from *ngrok, Inc.* | A folder exclusion, scoped to one directory. Verify the signature *after* excluding and *before* running — an exclusion hiding an unverified binary is worse than the block it removed. |

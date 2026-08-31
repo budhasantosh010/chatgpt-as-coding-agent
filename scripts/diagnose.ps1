@@ -218,7 +218,7 @@ if (-not $publicHost) {
     else {
         Line "      agent            NOT RUNNING"
         Line "      ngrok is not a service. It does not survive a reboot, and"
-        Line "      start-harness.bat does not start it. Use start-ngrok.bat."
+        Line "      start-tailscale.bat does not start it. Use start-ngrok.bat."
     }
     Show "public" "NGROK"
 }
@@ -274,7 +274,7 @@ if ((-not $engineUp) -or (-not $localOk)) {
     Write-Host "   The engine runs in a console window with no supervisor:"
     Write-Host "   closing that window is a full stop, and nothing restarts it."
     Write-Host ""
-    Write-Host "   FIX:  start-harness.bat   (Tailscale door)" -ForegroundColor Green
+    Write-Host "   FIX:  start-tailscale.bat   (Tailscale door)" -ForegroundColor Green
     Write-Host "         start-ngrok.bat     (ngrok door; starts the engine too)" -ForegroundColor Green
     Banner $false "NOT WORKING - ChatGPT cannot connect right now." "DO THIS:  double-click start-ngrok.bat"
     exit 1
@@ -331,7 +331,7 @@ function Door-Reason($key, $label, $isConfigured) {
         if ($key -eq "NGROK") {
             [void]$msg.Add("  The engine was started BEFORE HARNESS_PUBLIC_HOST was set.")
             [void]$msg.Add("  Config is read at startup only, so it never picked it up.")
-            [void]$msg.Add("  Fix:  stop-harness.bat, then start-ngrok.bat")
+            [void]$msg.Add("  Fix:  stop-ngrok.bat AND stop-tailscale.bat, then start the door you want")
             [void]$msg.Add("  Check: python -m harness doctor  ->  'second public door'")
         } else {
             [void]$msg.Add("  Restart the engine; config is read at startup only.")
@@ -391,7 +391,7 @@ if (-not ($funnelOk -or $ngrokOk)) {
     Emit $funnelReason "Yellow"
     Emit $ngrokReason  "Yellow"
     Write-Host ""
-    Write-Host "   FIX:  start-harness.bat  and/or  start-ngrok.bat" -ForegroundColor Green
+    Write-Host "   FIX:  start-tailscale.bat  and/or  start-ngrok.bat" -ForegroundColor Green
     Banner $false "NOT WORKING - ChatGPT cannot connect right now." "DO THIS:  double-click start-ngrok.bat"
     exit 1
 }

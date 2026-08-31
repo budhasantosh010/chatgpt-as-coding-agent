@@ -130,18 +130,31 @@ odd. The suite is 484 tests, about 105 seconds.
 What the operator actually double-clicks:
 
 ```
-start-harness.bat     tailscale check -> funnel -> engine (:8848 + :8849) -> verify
-stop-harness.bat      funnel down, then kill whatever listens on 8848 / 8849
-start-ngrok.bat       STANDALONE ngrok path: engine (start or reuse) -> ngrok
-                      -> verify. Never calls Tailscale, deliberately:
-                      start-harness.bat gates on `tailscale status`, so on a
-                      network that blocks Tailscale it refuses before the
-                      engine ever starts. Run both for two doors at once.
-diagnose.bat          READ-ONLY. Checks outward from the engine and names
-                      the broken part. Starts/stops/changes nothing, so it
-                      is safe mid-task. 502 from a public URL means the
-                      TUNNEL IS FINE and the engine is down.
+FIVE FILES. Four are one door each way; the fifth answers "is it working?".
+
+start-tailscale.bat   tailscale check -> engine (start or reuse) -> funnel
+                      -> verify. Engine BEFORE funnel: a funnel over a dead
+                      engine answers 502, which reads as a broken tunnel.
+stop-tailscale.bat    funnel down, then engine-stop-if-idle.ps1
+start-ngrok.bat       engine (start or reuse) -> ngrok -> verify. NEVER calls
+                      Tailscale, deliberately: start-tailscale.bat gates on
+                      `tailscale status`, so on a network that blocks Tailscale
+                      it refuses before the engine ever starts -- which would
+                      make the one working door unopenable exactly where it is
+                      needed. Run both files for two doors at once.
+stop-ngrok.bat        ngrok agent down, then engine-stop-if-idle.ps1
+diagnose.bat          READ-ONLY. Checks outward from the engine and names the
+                      broken part; every exit path ends in a WORKING /
+                      NOT WORKING banner. Safe mid-task. 502 from a public URL
+                      means the TUNNEL IS FINE and the engine is down.
 ```
+
+`scripts/engine-stop-if-idle.ps1` is the rule that keeps the two stop files
+from fighting: **the engine is stopped by the LAST door to close.** Closing one
+door while the other is open leaves the engine up on purpose — otherwise
+stopping one tunnel would silently kill the other, presenting as the exact
+"both doors dead, must be the network" failure this project keeps hitting.
+There is still no `harness down`, so it stops by port.
 
 Two tunnels, one engine. `scripts/check-funnel.ps1` and `scripts/check-ngrok.ps1`
 each send a real MCP `initialize` down the real public path, because every
@@ -149,7 +162,7 @@ cheaper check lies: `tailscale funnel status` reads local config, a MagicDNS
 probe never leaves the tailnet, and `ngrok online` only means the agent reached
 ngrok's edge.
 
-CLI surface — **there is no `harness down`**, which is why `stop-harness.bat`
+CLI surface — **there is no `harness down`**, which is why `stop-tailscale.bat`
 stops by port:
 
 ```
