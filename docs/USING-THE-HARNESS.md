@@ -1685,6 +1685,9 @@ corrected too.
 
 ### Known issue, unresolved: Tailscale daemon stuck in `NoState`
 
+> **UPDATE: this RESOLVED ITSELF. See “Resolution” at the end of this section. The account below is kept
+> exactly as written, because what it got wrong is the useful part.**
+
 During this testing the Tailscale backend wedged:
 
 ```
@@ -1721,3 +1724,44 @@ The fix needs an elevated service restart, which is an operator action:
 dead, `diagnose.bat` reported `WORKING - ChatGPT can connect (ngrok)` and the
 harness stayed usable. That is precisely the scenario the second door was built
 for — and the first time it has been needed for real rather than rehearsed.
+
+### Resolution — it fixed itself, and the diagnosis above was wrong
+
+No `Restart-Service` was ever run. Checked again a while later:
+
+```
+  BackendState  Running          funnel   already back on
+  node          100.66.47.70     URL      unchanged
+```
+
+Both doors returned a real MCP handshake immediately.
+
+**What the section above got wrong:** it presented a stuck state as a fault
+needing operator intervention. It was a **slow start**, not a wedge. Tailscale's
+own message said so plainly — *"Tailscale is starting. Please wait."* — and that
+was read as boilerplate rather than as the answer.
+
+Two waits had already been given (~2 minutes, then `up` / `down`+`up`) and both
+came back `NoState`, which is what made "stuck" look like the honest reading.
+It was not. **"Please wait" meant wait, and the wait was longer than the
+patience applied to it.**
+
+The correlation floated above — repeated `tailscale funnel reset` / `--bg` —
+is now **weak evidence at best**. Nothing was done to fix it and it recovered
+anyway, which is exactly what a slow start looks like and not what a
+config-induced wedge looks like. Recorded here rather than quietly deleted,
+because a wrong guess that was labelled a guess is worth keeping.
+
+**The escalation advice was also premature.** Telling an operator to run
+`Restart-Service Tailscale` as Administrator, for something that clears on its
+own, spends their trust and their time on nothing. Wait longer before reaching
+for the elevated fix.
+
+**What still stands:** with Tailscale genuinely unavailable for that whole
+window, the ngrok door carried the harness and `diagnose.bat` reported
+`WORKING - ChatGPT can connect (ngrok)`. Not all-fine, not all-broken — which
+door was alive. That part needed no correction.
+
+```
+   2026-08-31   "stuck" Tailscale     it was starting; waiting was the fix
+```
