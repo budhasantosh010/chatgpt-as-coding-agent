@@ -28,7 +28,11 @@ if errorlevel 1 (
     echo.
     echo     If that fails, THIS NETWORK IS BLOCKING TAILSCALE. Public, guest
     echo     and some hotspot networks filter VPN control servers by name in
-    echo     the TLS handshake. Nothing on your side fixes it. Use home Wi-Fi.
+    echo     the TLS handshake. Nothing on your side fixes it.
+    echo.
+    echo     USE THE SECOND DOOR:  start-ngrok.bat
+    echo     That is exactly what it is for. It never calls Tailscale, starts
+    echo     the engine itself, and reaches the same tasks and files.
     echo.
     pause
     exit /b 1
@@ -88,6 +92,10 @@ if errorlevel 1 (
     echo.
     echo  X  Not reachable from the internet. The check above says which cause.
     echo.
+    echo     Still stuck? Run  diagnose.bat  - it checks outward from the
+    echo     engine and names the broken part. A 502 there means the tunnel
+    echo     is FINE and the engine is down; do not reconfigure the tunnel.
+    echo.
     pause
     exit /b 1
 )
@@ -102,5 +110,7 @@ echo  ================================================
 echo.
 start "" http://127.0.0.1:8849
 echo  This window can be closed. The engine keeps running in its own window.
+echo  Do NOT close the "Harness engine" window - that stops the harness, and
+echo  nothing restarts it. If ChatGPT stops connecting, run diagnose.bat.
 echo.
 pause

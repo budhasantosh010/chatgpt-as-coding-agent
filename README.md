@@ -72,6 +72,7 @@ ChatGPT  ──MCP over HTTPS──►  Tailscale Funnel  ──►  localhost:8
 start-harness.bat      ← starts everything
 stop-harness.bat       ← shuts it down
 start-ngrok.bat        ← optional second door, for networks that block Tailscale
+diagnose.bat           ← "why can't ChatGPT connect?" - read-only, safe anytime
 ```
 
 `start-harness.bat` runs the four steps that have to happen in order, and

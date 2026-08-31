@@ -24,4 +24,8 @@ powershell -NoProfile -Command ^
 echo.
 echo  Stopped. The URL does not change - start-harness.bat brings it all back.
 echo.
+echo  Note: this does NOT close the ngrok door. Use scripts\stop-ngrok.ps1 for
+echo  that. With the engine stopped, ngrok stays "online" and returns 502 to
+echo  ChatGPT - the tunnel is fine, there is just nothing behind it.
+echo.
 pause

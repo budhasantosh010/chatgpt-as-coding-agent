@@ -70,7 +70,10 @@ raise SystemExit(0 if ok else 1)
 "@
 
 Write-Host "public funnel ingress  :"
-$py | & C:\Python313\python.exe -
+# `python`, not a hardcoded C:\Python313\python.exe: that path breaks on
+# the next Python upgrade and on every other machine, and the failure looks
+# like a dead tunnel rather than a missing interpreter.
+$py | & python -
 if ($LASTEXITCODE -eq 0) {
     Write-Host "`nReachable from the internet. ChatGPT can connect." -ForegroundColor Green
 } else {

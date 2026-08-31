@@ -1242,3 +1242,107 @@ version floor and the unpinned `mcp` each taught. Sixth entry in that list.
 **When two tools disagree, neither is the witness — find the third.** PowerShell
 said dead, Python said alive. ngrok's own request counter settled it, and pointed
 at the measuring instrument rather than the thing measured.
+
+---
+
+## 20. `diagnose.bat` — the answer to "why can't ChatGPT connect?"
+
+*Added 2026-08-31. Nothing above this line was changed or removed.*
+
+§19 was a diagnosis done by hand. This is that diagnosis turned into a file you
+double-click, so it never has to be redone from memory.
+
+```
+  diagnose.bat        READ-ONLY. Starts nothing, stops nothing, changes
+                      nothing. Safe to run while ChatGPT is mid-task.
+```
+
+### What it prints
+
+```
+  [1] ENGINE          is the engine even alive? pid, and both ports
+  [2] LOCAL path      does the engine answer a real MCP initialize?
+  [3] TAILSCALE door  funnel config, THEN an actual probe
+  [4] NGROK door      agent running? then an actual probe
+
+  VERDICT             the part worth reading
+```
+
+Then one of five verdicts, each with the fix attached:
+
+```
+  both doors WORKING    -> prints the connector URLs
+  ENGINE IS DOWN        -> and says so even when the doors return 502
+  PORT MISMATCH         -> local dead, a door alive: the tunnel forwards
+                           somewhere the config does not name
+  no public door open   -> engine healthy, 403 / interstitial / not started
+  config unreadable     -> wrong folder, or Python not on PATH
+```
+
+### Why it checks outward from the engine
+
+Because **one engine sits behind both doors.** Kill it and both doors fail at
+once, which reads like the network broke. Checking inward from the tunnel sends
+you reconfiguring the one part that was never at fault. §19 is the full account
+of that exact wrong turn.
+
+The verdict it exists to deliver:
+
+```
+   502 from a public URL  ->  THE TUNNEL IS FINE. The engine is down.
+```
+
+### Two things it is careful about
+
+**`engine.pid` is not a liveness check.** It records what last *started* and
+nothing clears it on exit. When the recorded PID is not running, `diagnose`
+says so out loud rather than trusting the file.
+
+**"Funnel on" is intent, not proof.** The script prints the config line, then
+prints — in the same breath — that only the probe below it is evidence.
+
+### The measurement bug found while building it
+
+The first working version took **2 minutes 3 seconds** to answer. It was right,
+just unusable. The cause was not the harness:
+
+```
+  ngrok publishes AAAA records. getaddrinfo returns IPv6 first.
+  Python tries addresses IN ORDER with no Happy Eyeballs fallback.
+  On a network where IPv6 to the edge is broken, every probe burned
+  the full timeout on each v6 address before reaching a working v4 one.
+
+      before  2m 03s          after  3.6s          same verdict
+```
+
+Fixed by pinning `socket.getaddrinfo` to `AF_INET` for the probes. **This does
+not weaken the check** — ChatGPT reaches the tunnel from OpenAI's servers, never
+across this machine's Wi-Fi, so local IPv6 was never on the path being tested.
+Pinning v4 makes the probe a *closer* match to what ChatGPT experiences.
+
+`scripts/check-ngrok.ps1` had the identical defect, which means step `[3/3]` of
+`start-ngrok.bat` had been stalling ~2 minutes on this network. Same fix.
+`check-funnel.ps1` needed none: it already resolves A records only and connects
+to those addresses directly, which is why the funnel probe was always fast.
+
+Also removed while in there: both check scripts hardcoded
+`C:\Python313\python.exe`. That breaks on the next Python upgrade and on every
+other machine, and it fails *looking like a dead tunnel* rather than a missing
+interpreter. Both now call `python`.
+
+### How to test it yourself
+
+The failure path is the part that matters, and you can exercise it for real:
+
+```
+  1. diagnose.bat            -> expect both doors WORKING
+  2. stop-harness.bat        -> stops the engine, LEAVES ngrok running
+  3. diagnose.bat            -> expect ENGINE IS DOWN, and the doors
+                                reporting 502 rather than a timeout
+  4. start-harness.bat       -> back up
+  5. diagnose.bat            -> WORKING again
+```
+
+Step 3 is the whole point: **502, not timeout.** That is the tunnel telling you
+it reached your machine and found nobody home. If you see a timeout there
+instead, the tunnel really is down and the network is a fair suspect again.

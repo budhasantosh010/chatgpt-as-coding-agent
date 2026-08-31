@@ -83,6 +83,10 @@ if errorlevel 1 (
     echo.
     echo  X  Not usable yet. The check above names the cause.
     echo.
+    echo     Still stuck? Run  diagnose.bat  - it checks outward from the
+    echo     engine and names the broken part. A 502 there means the tunnel
+    echo     is FINE and the engine is down; do not reconfigure the tunnel.
+    echo.
     pause
     exit /b 1
 )
@@ -100,5 +104,9 @@ echo  ================================================
 echo.
 start "" http://127.0.0.1:8849
 echo  This window can be closed. The engine keeps running in its own window.
+echo  Do NOT close the "Harness engine" window - that stops the harness, and
+echo  nothing restarts it. ngrok is not a service either: it does not survive
+echo  a reboot, so run this file again after one. If ChatGPT stops connecting,
+echo  run diagnose.bat.
 echo.
 pause

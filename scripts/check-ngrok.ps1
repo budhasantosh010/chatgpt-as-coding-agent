@@ -35,6 +35,21 @@ if (-not $engineUp) {
 
 $py = @"
 import json, urllib.error, urllib.request
+import socket
+
+# Force IPv4. Tunnel edges publish AAAA records, getaddrinfo returns them
+# first, and Python tries addresses IN ORDER with no Happy Eyeballs fallback --
+# so on a network where IPv6 to the edge is broken, this check burns the full
+# timeout on every v6 address before reaching a working v4 one. Measured on one
+# such network: 2m03s before this pin, 3.6s after, same verdict both times.
+#
+# It does not weaken the check. ChatGPT reaches the tunnel from OpenAI's
+# servers, never across this machine's Wi-Fi, so the operator's local IPv6 is
+# not on the path being tested.
+_getaddrinfo = socket.getaddrinfo
+def _v4_only(host, port, family=0, type=0, proto=0, flags=0):
+    return _getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
+socket.getaddrinfo = _v4_only
 host, route = "$publicHost", "$route"
 url = f"https://{host}/{route}/mcp"
 body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize",
@@ -73,7 +88,10 @@ raise SystemExit(7)
 "@
 
 Write-Host "ngrok public path      :"
-$py | & C:\Python313\python.exe -
+# `python`, not a hardcoded C:\Python313\python.exe: that path breaks on
+# the next Python upgrade and on every other machine, and the failure looks
+# like a dead tunnel rather than a missing interpreter.
+$py | & python -
 $code = $LASTEXITCODE
 
 switch ($code) {
