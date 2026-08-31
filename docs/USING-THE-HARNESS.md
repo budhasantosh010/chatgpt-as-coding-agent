@@ -1473,3 +1473,83 @@ say them.
 
 Three branches read but not flown, named here so nobody mistakes this section for
 a claim of full coverage.
+
+---
+
+## 22. The bug that only a real user could find
+
+*Added 2026-08-31. Nothing above this line was changed or removed.*
+
+`diagnose.bat` was flown through every branch (§21) and each one gave a correct
+answer. Then the operator ran it for the first time and said:
+
+> **"I don't know if it is working or not here."**
+
+The output they were looking at was *right*. It correctly found the engine down,
+correctly explained why, and correctly named the fix. **And it still failed**,
+because the person reading it could not tell what it was telling them.
+
+### Why a correct answer read as noise
+
+```
+  [1] ENGINE      DOWN     DOWN     STALE          <- looks like errors
+  [2] LOCAL       HTTP 0                           <- looks like errors
+  [3] TAILSCALE   502                              <- looks like errors
+  [4] NGROK       NOT RUNNING   404                <- looks like errors
+
+  VERDICT ... eight lines of prose ...
+  ... then a wall of three URLs ...
+  Press any key to continue . . .                  <- the last thing on screen
+```
+
+Three things went wrong at once:
+
+- **A screen of `DOWN` / `HTTP 0` / `404` reads as "the tool broke."** Someone
+  who does not already know the tool cannot tell a *finding* from a *failure*.
+- **The verdict was prose, not a signal.** Eight lines of explanation with no
+  single word saying yes or no.
+- **The answer was not last.** A terminal leaves you looking at whatever printed
+  most recently, and that was three URLs and `Press any key`. The most useful
+  line had already scrolled away.
+
+### The fix
+
+Every exit path now ends — **last, after everything else** — in one box:
+
+```
+  ##################################################
+  ##
+  ##   NOT WORKING - ChatGPT cannot connect right now.
+  ##
+  ##   DO THIS:  double-click start-ngrok.bat
+  ##
+  ##################################################
+```
+
+Green when it works, red when it does not, and always the final thing on screen.
+Five exit paths, five banners: `WORKING`, `NOT WORKING`, `PORT MISMATCH`, and
+`COULD NOT CHECK` (which says explicitly that it is *not* a harness fault, so a
+missing Python does not get read as a broken tunnel).
+
+All five were flown: engine down, port mismatch, and the healthy path driven
+through real states, not reasoned about.
+
+### The lesson, which is not a small one
+
+**A diagnostic that is correct but unreadable has not done its job.** §21 proved
+every branch produced the right answer. It could not have caught this, because
+the failure was not in the logic — it was in whether a human could act on the
+output. Correctness and usability are separate properties and need separate
+tests.
+
+Note also *how* it was caught. Not by the author, who knew what every line meant
+and therefore could not see the problem. It took one person with no context
+reading it cold — which is the same standard this project's documentation is
+held to, now applied to its tools.
+
+```
+   2026-08-31   every branch correct   operator still could not read it
+```
+
+Seventh entry in the flight-lesson list, and the first where a green flight was
+itself the thing that missed the bug.

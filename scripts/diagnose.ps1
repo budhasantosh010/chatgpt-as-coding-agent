@@ -30,6 +30,31 @@ Set-Location (Split-Path $PSScriptRoot -Parent)
 function Line($s) { if (-not $Quiet) { Write-Host $s } }
 function Head($s) { if (-not $Quiet) { Write-Host ""; Write-Host $s -ForegroundColor Cyan } }
 
+# The single most important line on the screen, and it must be the LAST one.
+#
+# The first version buried the answer under four sections of DOWN / HTTP 0 / 404
+# and then ended on a wall of URLs. A real operator read that output, saw a
+# correct diagnosis, and still could not tell whether the harness was working --
+# because a screen full of red-looking detail reads as "the tool broke" and the
+# terminal leaves you looking at whatever printed last.
+#
+# So: one unmissable box, plain words, one action, printed last on every single
+# exit path. A diagnostic that is right but unreadable has not done its job.
+function Banner($working, $headline, $action) {
+    $colour = if ($working) { "Green" } else { "Red" }
+    Write-Host ""
+    Write-Host "  ##################################################" -ForegroundColor $colour
+    Write-Host "  ##" -ForegroundColor $colour
+    Write-Host ("  ##   " + $headline) -ForegroundColor $colour
+    Write-Host "  ##" -ForegroundColor $colour
+    if ($action) {
+        Write-Host ("  ##   " + $action) -ForegroundColor $colour
+        Write-Host "  ##" -ForegroundColor $colour
+    }
+    Write-Host "  ##################################################" -ForegroundColor $colour
+    Write-Host ""
+}
+
 Line ""
 Line "  ================================================"
 Line "   HARNESS - diagnosis"
@@ -44,6 +69,7 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host "  X  Could not read the harness config." -ForegroundColor Red
     Write-Host "     Is Python on PATH, and is this the repo folder?"
     Write-Host ("     " + ($cfg -join " "))
+    Banner $false "COULD NOT CHECK - this is not a harness fault." "Run this from the repo folder, with Python on PATH."
     exit 2
 }
 $port       = [int]$cfg[0]
@@ -225,7 +251,7 @@ if ((-not $localOk) -and ($funnelOk -or $ngrokOk)) {
     Write-Host "   Check:  python -m harness doctor        (the port it reports)"
     Write-Host "           tailscale funnel status         (the port it proxies to)"
     Write-Host "           HARNESS_PORT in .env, if it is set at all"
-    Write-Host ""
+    Banner $false "PORT MISMATCH - config and tunnel disagree." "Make them name the same port, then run this again."
     exit 1
 }
 
@@ -250,7 +276,7 @@ if ((-not $engineUp) -or (-not $localOk)) {
     Write-Host ""
     Write-Host "   FIX:  start-harness.bat   (Tailscale door)" -ForegroundColor Green
     Write-Host "         start-ngrok.bat     (ngrok door; starts the engine too)" -ForegroundColor Green
-    Write-Host ""
+    Banner $false "NOT WORKING - ChatGPT cannot connect right now." "DO THIS:  double-click start-ngrok.bat"
     exit 1
 }
 
@@ -366,7 +392,7 @@ if (-not ($funnelOk -or $ngrokOk)) {
     Emit $ngrokReason  "Yellow"
     Write-Host ""
     Write-Host "   FIX:  start-harness.bat  and/or  start-ngrok.bat" -ForegroundColor Green
-    Write-Host ""
+    Banner $false "NOT WORKING - ChatGPT cannot connect right now." "DO THIS:  double-click start-ngrok.bat"
     exit 1
 }
 
@@ -385,5 +411,9 @@ Write-Host "   ChatGPT can connect through the door(s) marked WORKING."
 Write-Host "   Paste the matching URL as its connector:"
 Write-Host ""
 python -m harness url
-Write-Host ""
+
+$doors = @()
+if ($funnelOk) { $doors += "Tailscale" }
+if ($ngrokOk)  { $doors += "ngrok" }
+Banner $true ("WORKING - ChatGPT can connect (" + ($doors -join " + ") + ").") "Nothing to do. Use ChatGPT as normal."
 exit 0
