@@ -1086,3 +1086,159 @@ The two install blockers and how they were settled are in
  [ ] this is not a security improvement. A second public entrance is a
      second public entrance. Every gate is exactly as it was.
 ```
+
+---
+
+## 19. "Neither door works after I changed WiFi"
+
+*Added 2026-08-31. Nothing above this line was changed or removed.*
+
+The first real diagnosis of a both-doors-down report. The reported symptom and
+the actual cause had nothing to do with each other, which is the reason this
+section exists.
+
+### What was reported
+
+> "check why it is not running, both the tailscale and ngrok are not running.
+> I changed the wifi and this is on another network but it's not picking both"
+
+The natural reading is *the new network broke the tunnels*. It had not. The new
+network was innocent.
+
+### What was actually true
+
+```
+                    ChatGPT
+             +---------+---------+
+             v                   v
+      Tailscale Funnel         ngrok
+      ON. Network clean.       NOT RUNNING -- nobody
+      netcheck: UDP yes,       ever started it. It is
+      no captive portal,       not a service and does
+      DERP Dubai 15ms.         not survive a reboot.
+             +---------+---------+
+                       v
+                localhost:8848
+                DEAD  <-- the ONLY real fault
+```
+
+**One dead engine presents as two dead tunnels.** That is the whole lesson.
+Because both doors lead to the same room, an empty room makes every door look
+broken, and the operator reasonably blames the thing that changed — the WiFi.
+
+`tailscale funnel status` still cheerfully printed `Funnel on`. It was telling
+the truth: the funnel *was* on. A funnel with no backend returns **502**, and a
+502 from a public URL is indistinguishable from a dead tunnel unless you look.
+
+### The distinguishing test — 502 vs. no answer
+
+This is the fastest way to tell the two apart, and it costs one command:
+
+```
+  curl the PUBLIC url:
+
+    HTTP 502          -> the tunnel is FINE. The engine is down.
+                         Fix the engine. Do not touch the tunnel.
+
+    timeout / refused -> the tunnel is down (or the network blocks it).
+                         Now the network is a fair suspect.
+
+    HTTP 403          -> engine is up, tunnel is up, and the harness
+                         REJECTED the Host. Engine was started before
+                         HARNESS_PUBLIC_HOST was set. Restart the engine.
+```
+
+A 502 is the tunnel reporting *"I got through to your machine and nothing
+answered."* It is evidence the tunnel works.
+
+### Why the engine was down
+
+No crash. Checked and ruled out:
+
+```
+  Windows Event Log, Application, last hour   -> no error, no fault
+  python.exe processes                        -> gone entirely
+  cmd.exe windows                             -> gone (orphan conhosts left)
+  engine.pid                                  -> STALE: held 9628, a dead PID
+```
+
+The engine runs in a console window. **Closing that window kills the harness.**
+`stop-harness.bat` does the same thing deliberately. There is no service, no
+auto-restart, and no supervisor — by design, but it means the harness is exactly
+as alive as its window.
+
+`engine.pid` is not a liveness check. It records the PID that *last started*,
+and nothing clears it on exit. A present `engine.pid` proves nothing.
+
+### The second trap: a local probe can lie about ngrok
+
+After the tunnel was confirmed live, a PowerShell check kept timing out while a
+Python one returned `HTTP 200`. Both hit the same URL, seconds apart.
+
+The tiebreaker was ngrok's own counter — the only witness that cannot be argued
+with:
+
+```
+  http://127.0.0.1:4040/api/tunnels   ->   conns: 1,  http: 1
+
+  Still ONE, after two "failed" probes. The failing requests never
+  reached ngrok's edge at all. So the tunnel was never the problem.
+```
+
+The cause, isolated:
+
+```
+  curl -4  https://<reserved>.ngrok-free.dev/   ->  HTTP 200,  0.14s
+  curl -6  https://<reserved>.ngrok-free.dev/   ->  timeout,  15s
+```
+
+**IPv6 to ngrok's edge is broken on this network.** ngrok publishes AAAA records,
+PowerShell 5.1's `Invoke-WebRequest` prefers IPv6 and does not fall back quickly;
+`curl` and Python do Happy Eyeballs and drop to IPv4 in milliseconds. Same URL,
+same instant, opposite verdicts — purely a difference in which tool you asked.
+
+**This does not affect ChatGPT, and the reason matters.** ChatGPT's request goes
+from *OpenAI's servers* to *ngrok's edge*. It never crosses the operator's WiFi
+inbound. The only thing the laptop needs is its own **outbound** connection to
+ngrok, which was established and live the whole time.
+
+```
+   OpenAI servers ---> ngrok edge ---> [outbound tunnel] ---> laptop
+   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^                            ^^^^^^
+   this leg never touches your WiFi                          only this
+                                                             leg is yours
+```
+
+So: a local IPv6 fault makes *your own testing* fail while the product works.
+Diagnose ngrok with `curl`, or with `scripts/check-ngrok.ps1` (which shells out
+to Python for exactly this reason), never with bare `Invoke-WebRequest`.
+
+### The fix, in order
+
+```
+  1. Start the engine.        Verify :8848 AND :8849 are listening.
+  2. Probe LOCAL first.       http://127.0.0.1:8848/<secret>/mcp -> 200
+                              If local fails, no tunnel can succeed.
+  3. Probe the FUNNEL.        Already on; nothing to restart.
+  4. Start ngrok.             scripts/ngrok.ps1 -- it is not automatic.
+  5. Probe NGROK.             scripts/check-ngrok.ps1  (exit 0)
+```
+
+Working outward from the engine finds this in one pass. Starting at the tunnel
+sends you to reconfigure the one part that was never broken.
+
+### What to carry forward
+
+**A shared dependency turns one failure into N symptoms.** Two doors, one engine:
+kill the engine and you get two independent-looking faults, both pointing away
+from the cause. When several things break at once, look for what they share
+before you look at what changed.
+
+**"Status: on" is intent; a request is evidence.** `tailscale funnel status` said
+on, and was correct, and was useless. Only an end-to-end request distinguished
+*configured* from *working* — the same lesson the fork bug, F1/F2, F3, the ngrok
+version floor and the unpinned `mcp` each taught. Sixth entry in that list.
+
+**When two tools disagree, neither is the witness — find the third.** PowerShell
+said dead, Python said alive. ngrok's own request counter settled it, and pointed
+at the measuring instrument rather than the thing measured.
