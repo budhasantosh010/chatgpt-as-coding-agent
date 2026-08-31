@@ -1151,6 +1151,13 @@ This is the fastest way to tell the two apart, and it costs one command:
 A 502 is the tunnel reporting *"I got through to your machine and nothing
 answered."* It is evidence the tunnel works.
 
+> **Refined by testing, 2026-08-31 — see [§21](#21-what-flying-diagnosebat-actually-changed).**
+> The *first* probe after the engine dies can be a connection **reset** rather
+> than a 502, because tailscaled still holds a pooled connection to the dead
+> process. Every probe after that is a clean 502. So the rule above is right,
+> but it is not what makes the diagnosis safe — **checking the engine before
+> interpreting any public symptom is.**
+
 ### Why the engine was down
 
 No crash. Checked and ruled out:
@@ -1346,3 +1353,123 @@ The failure path is the part that matters, and you can exercise it for real:
 Step 3 is the whole point: **502, not timeout.** That is the tunnel telling you
 it reached your machine and found nobody home. If you see a timeout there
 instead, the tunnel really is down and the network is a fair suspect again.
+
+---
+
+## 21. What flying `diagnose.bat` actually changed
+
+*Added 2026-08-31. Nothing above this line was changed or removed.*
+
+§20 shipped with one branch untested — the 502 case needed a really-stopped
+engine. It was then flown properly: engine killed, tunnels deliberately left up,
+every branch driven through real states rather than reasoned about.
+
+**Four bugs surfaced, three of which would have given confidently wrong advice.**
+That is the whole argument for flying it, written out once more.
+
+### The runs
+
+| # | State forced | Expected | What happened |
+|---|---|---|---|
+| 1 | everything up | both WORKING | pass, 2.8s |
+| 2 | engine killed, tunnels left up | ENGINE DOWN + 502 | pass — **and found bugs A, B, D** |
+| 3 | engine trusting a bogus `PUBLIC_HOST` | ngrok 403 explained | pass — **confirmed fix C** |
+| 4 | ngrok agent stopped | "start ngrok" | **failed — bug B** |
+| 5 | rerun of 4 after fix | ERR_NGROK_3200 named | pass |
+
+### Bug A — "502 = tunnel fine" was not the whole truth
+
+§19 says a dead engine makes the funnel return 502. The **first** probe after the
+engine dies can instead be a **connection reset** — tailscaled still holds a
+pooled connection to the corpse. Every probe after that is a clean 502.
+
+```
+  engine killed
+    probe 1   ConnectionResetError     <- stale pooled connection
+    probe 2   502
+    probe 3   502   ... consistently
+```
+
+The verdict was right anyway, and *why* it was right is the point: `diagnose`
+checks the engine **before** interpreting any public symptom. Had it reasoned
+backwards from "reset means the tunnel is down", it would have blamed the
+network — the exact error §19 exists to prevent. **Checking order was doing the
+work, not the 502 rule.**
+
+### Bug B — ngrok's 404 was read as *your* 404
+
+With the agent stopped, ngrok's edge answers:
+
+```
+  The endpoint <domain> is offline.
+  ERR_NGROK_3200                        HTTP 404
+```
+
+The first version reported *"tunnel fine, but the secret route is wrong — the
+ChatGPT connector needs rebuilding."* **Completely wrong, and expensive**: it
+sends you rebuilding a connector that was never broken, when the fix is to start
+ngrok.
+
+A status code does not say who answered. Now the actual error code is carried
+through and matched:
+
+```
+  ERR_NGROK_3200   endpoint offline  -> no agent serving. Start ngrok.
+                                        Route and connector are FINE.
+  ERR_NGROK_8012   agent up, upstream unreachable
+                                     -> tunnel fine. The ENGINE is down.
+```
+
+Both otherwise arrive as a bare 404 and 502 — **status codes the harness itself
+produces for entirely different reasons.**
+
+### Bug C — a door's explanation was hidden by the other door working
+
+The 403 / interstitial explanations only printed when **both** doors were down.
+But the most common ngrok fault — a 403 from an engine started before
+`HARNESS_PUBLIC_HOST` was set — usually happens while the funnel is perfectly
+healthy. So the one case most likely to occur was the one guaranteed to print
+`ngrok door: down` and nothing else.
+
+Each door now explains itself regardless of what the other is doing.
+
+### Bug D — a silent parse failure that read as "we skipped it"
+
+The probe printed five fields on success and four on a connection error, while
+the reader required five. A door that *refused the connection* therefore showed:
+
+```
+      public  not checked
+```
+
+Which reads as "we didn't look" rather than "it slammed the door". Worst kind of
+bug in a diagnostic: it hides exactly when something is wrong.
+
+### One more trap, avoided rather than hit
+
+ngrok's 502 body is **HTML** for browser-ish clients and **text/plain** for a
+JSON client. Sniffing content-type alone would have flagged it as the free-tier
+interstitial — a third wrong answer. Matching on the error code sidesteps it.
+
+### The measurement, again
+
+```
+  check-ngrok.ps1   before  >120s        after  2.9s
+  diagnose.ps1      before  2m 03s       after  2.8s
+```
+
+Same verdicts throughout. The only thing that changed was how long it took to
+say them.
+
+### What is still not proven
+
+- The **`ERR_NGROK_8012` branch is defensive, not flown.** Reaching it needs the
+  agent forwarding to a port the engine is not on, and in every ordinary layout
+  the engine check fires first and exits before that message can print.
+- **"No public door at all"** was not flown. Reaching it means taking the funnel
+  down, and the funnel is under a hard do-not-touch rule on this project.
+- The harness's own **404** (genuinely wrong secret route) was not flown; only
+  ngrok's lookalike was.
+
+Three branches read but not flown, named here so nobody mistakes this section for
+a claim of full coverage.

@@ -97,7 +97,7 @@ $targetsJson = ConvertTo-Json -InputObject @($targets) -Compress -Depth 4
 # milliseconds. Same URL, same second, opposite verdicts -- so which client
 # does the asking is load-bearing, not cosmetic.
 $py = @"
-import json, socket, urllib.error, urllib.request
+import json, re, socket, urllib.error, urllib.request
 
 # Force IPv4. ngrok publishes AAAA records, getaddrinfo returns them first, and
 # Python tries addresses IN ORDER with no Happy Eyeballs fallback -- so on a
@@ -132,19 +132,36 @@ for name, url in targets:
     except urllib.error.HTTPError as e:
         status, ctype, payload = e.code, e.headers.get("Content-Type", ""), e.read(400)
     except Exception as exc:
-        print("{0}|0|no|{1}".format(name, type(exc).__name__))
+        # Five fields, like every other line. A four-field line silently fails
+        # the reader's regex and the door then reports "not checked" -- which
+        # reads as "we skipped it" rather than "it refused the connection".
+        print("{0}|0|no|{1}|-".format(name, type(exc).__name__))
         continue
     text = payload.decode("utf-8", "replace")
     ok = "yes" if (status == 200 and "protocolVersion" in text) else "no"
     kind = "html" if ("html" in ctype.lower() or "<!DOCTYPE" in text[:200]) else ctype
-    print("{0}|{1}|{2}|{3}".format(name, status, ok, kind))
+    # WHICH ngrok error, not merely "some ngrok error". The distinction decides
+    # the advice, and getting it wrong sends the operator to the wrong machine:
+    #
+    #   ERR_NGROK_3200  the endpoint is offline -- no agent is serving this
+    #                   domain. Start ngrok. The route and connector are fine.
+    #   ERR_NGROK_8012  the agent IS serving, but could not reach the upstream.
+    #                   The tunnel is fine; the ENGINE is down.
+    #
+    # Both arrive as plain 404/502 status codes that also have perfectly ordinary
+    # harness meanings (wrong secret route / dead backend), so the status code
+    # alone cannot tell you who answered.
+    m = re.search(r"ERR_NGROK_\d+", text)
+    edge = m.group(0) if m else "-"
+    print("{0}|{1}|{2}|{3}|{4}".format(name, status, ok, kind, edge))
 "@
 
 $raw = $py | & python -
 $res = @{}
 foreach ($l in $raw) {
-    if ("$l" -match "^(\w+)\|(\d+)\|(yes|no)\|(.*)$") {
-        $res[$matches[1]] = @{ status = [int]$matches[2]; ok = ($matches[3] -eq "yes"); kind = $matches[4].Trim() }
+    if ("$l" -match "^(\w+)\|(\d+)\|(yes|no)\|(.*)\|(ERR_NGROK_\d+|-)$") {
+        $res[$matches[1]] = @{ status = [int]$matches[2]; ok = ($matches[3] -eq "yes")
+                               kind   = $matches[4].Trim(); edge = $matches[5] }
     }
 }
 
@@ -237,24 +254,116 @@ if ((-not $engineUp) -or (-not $localOk)) {
     exit 1
 }
 
+
+# ---------------------------------------------------------------------------
+# Per-door reasons.
+#
+# These are worked out BEFORE the summary and printed whichever door failed,
+# not only when both are down. Getting that wrong is easy and costly: the most
+# common ngrok fault by far is a 403 from an engine started before
+# HARNESS_PUBLIC_HOST was set, and if the funnel happens to be healthy at the
+# same time, hiding the explanation leaves "ngrok door: down" with no cause and
+# no fix -- the exact dead end this whole file exists to remove.
+# ---------------------------------------------------------------------------
+function Door-Reason($key, $label, $isConfigured) {
+    if (-not $isConfigured) { return $null }
+    if (-not $res.ContainsKey($key)) { return $null }
+    $r = $res[$key]
+    if ($r.ok) { return $null }
+
+    $msg = New-Object System.Collections.ArrayList
+
+    # ngrok's OWN edge answered, not the harness. Checked first, and by ERROR
+    # CODE rather than status, because both of these arrive as ordinary status
+    # codes that the harness itself also produces for unrelated reasons.
+    if ($r.edge -eq "ERR_NGROK_3200") {
+        [void]$msg.Add("$label was answered by ngrok's edge, NOT by the harness.")
+        [void]$msg.Add("  ERR_NGROK_3200 - the endpoint is offline. The domain is")
+        [void]$msg.Add("  reserved to you, but no agent is serving it right now.")
+        [void]$msg.Add("  Your secret route and your ChatGPT connector are FINE -")
+        [void]$msg.Add("  this 404 is ngrok's, not the harness's.")
+        [void]$msg.Add("  Fix:  start-ngrok.bat")
+        [void]$msg.Add("  (ngrok is not a service - it does not survive a reboot.)")
+        return $msg
+    }
+    if ($r.edge -eq "ERR_NGROK_8012") {
+        [void]$msg.Add("$label reached the ngrok agent, which could NOT reach the engine.")
+        [void]$msg.Add("  ERR_NGROK_8012 - the tunnel is fine; nothing is listening")
+        [void]$msg.Add("  behind it, or it is listening on a different port.")
+        [void]$msg.Add("  Do not touch the tunnel. Check the engine.")
+        return $msg
+    }
+    if ($r.edge -ne "-") {
+        [void]$msg.Add("$label was answered by ngrok's edge: {0}." -f $r.edge)
+        [void]$msg.Add("  That is ngrok reporting, not the harness. Look the code up at")
+        [void]$msg.Add("  https://ngrok.com/docs/errors/ - the harness is not implicated.")
+        return $msg
+    }
+
+    if ($r.status -eq 403) {
+        [void]$msg.Add("$label returned 403 - the harness REFUSED the hostname.")
+        if ($key -eq "NGROK") {
+            [void]$msg.Add("  The engine was started BEFORE HARNESS_PUBLIC_HOST was set.")
+            [void]$msg.Add("  Config is read at startup only, so it never picked it up.")
+            [void]$msg.Add("  Fix:  stop-harness.bat, then start-ngrok.bat")
+            [void]$msg.Add("  Check: python -m harness doctor  ->  'second public door'")
+        } else {
+            [void]$msg.Add("  Restart the engine; config is read at startup only.")
+        }
+    }
+    elseif ($r.kind -eq "html") {
+        [void]$msg.Add("$label served ngrok's free-tier BROWSER WARNING page, not the harness.")
+        [void]$msg.Add("  ChatGPT cannot click through it, so the connector looks broken.")
+        [void]$msg.Add("  Fixes: a Traffic Policy rule setting ngrok-skip-browser-warning,")
+        [void]$msg.Add("  a paid plan, or just use the Tailscale door - it has no interstitial.")
+    }
+    elseif ($r.status -eq 404) {
+        [void]$msg.Add("$label returned 404 - tunnel fine, but the secret route is wrong.")
+        [void]$msg.Add("  Get the current URL:  python -m harness url")
+        [void]$msg.Add("  If the route was rotated, the ChatGPT connector needs rebuilding.")
+    }
+    elseif ($r.status -eq 502) {
+        [void]$msg.Add("$label returned 502 - the tunnel is FINE, nothing answered behind it.")
+        [void]$msg.Add("  Check the engine before touching any tunnel config.")
+    }
+    elseif ($r.status -eq 0) {
+        [void]$msg.Add("$label did not answer at all ({0})." -f $r.kind)
+        if ($key -eq "NGROK") {
+            if (Get-Process ngrok -ErrorAction SilentlyContinue) {
+                [void]$msg.Add("  The agent IS running, so check ngrok's own counter at")
+                [void]$msg.Add("  http://127.0.0.1:4040/api/tunnels - if it does not increment,")
+                [void]$msg.Add("  your request never reached ngrok and the tunnel is not at fault.")
+                [void]$msg.Add("  Broken local IPv6 does exactly this, and does NOT affect ChatGPT,")
+                [void]$msg.Add("  whose traffic runs OpenAI -> ngrok edge, never across your Wi-Fi.")
+            } else {
+                [void]$msg.Add("  The agent is not running. Start it:  start-ngrok.bat")
+            }
+        } else {
+            [void]$msg.Add("  The tunnel is down, or this network blocks it.")
+            [void]$msg.Add("  If Tailscale is blocked here, use the second door: start-ngrok.bat")
+        }
+    }
+    else {
+        [void]$msg.Add("$label returned HTTP {0} - unexpected. See section [3]/[4] above." -f $r.status)
+    }
+    return $msg
+}
+
+$funnelReason = Door-Reason "FUNNEL" "The Tailscale door" ([bool]$tsHost)
+$ngrokReason  = Door-Reason "NGROK"  "The ngrok door"     ([bool]$publicHost)
+
+function Emit($reason, $colour) {
+    if (-not $reason) { return }
+    Write-Host ""
+    foreach ($l in $reason) { Write-Host ("   " + $l) -ForegroundColor $colour }
+}
+
 if (-not ($funnelOk -or $ngrokOk)) {
     Write-Host ""
-    Write-Host "   The engine is HEALTHY, but no public door is open." -ForegroundColor Yellow
+    Write-Host "   The engine is HEALTHY, but NO public door is open." -ForegroundColor Yellow
     Write-Host "   ChatGPT reaches you through a tunnel, so it cannot connect yet."
-    Write-Host ""
-    if ($res.ContainsKey("FUNNEL") -and $res["FUNNEL"].status -eq 403) {
-        Write-Host "   The funnel returned 403 - the harness refused the Host."   -ForegroundColor Yellow
-        Write-Host "   Restart the engine; config is read at startup only."
-    }
-    if ($res.ContainsKey("NGROK") -and $res["NGROK"].status -eq 403) {
-        Write-Host "   ngrok returned 403 - the engine was started BEFORE"        -ForegroundColor Yellow
-        Write-Host "   HARNESS_PUBLIC_HOST was set. stop-harness.bat, then start again."
-    }
-    if ($res.ContainsKey("NGROK") -and $res["NGROK"].kind -eq "html") {
-        Write-Host "   ngrok served its free-tier BROWSER WARNING page, not the"  -ForegroundColor Yellow
-        Write-Host "   harness. ChatGPT cannot click through it. Use the funnel,"
-        Write-Host "   or set ngrok-skip-browser-warning via a Traffic Policy rule."
-    }
+    Emit $funnelReason "Yellow"
+    Emit $ngrokReason  "Yellow"
     Write-Host ""
     Write-Host "   FIX:  start-harness.bat  and/or  start-ngrok.bat" -ForegroundColor Green
     Write-Host ""
@@ -267,19 +376,14 @@ elseif ($tsHost)   { Write-Host "   Tailscale door : down"    -ForegroundColor Y
 if     ($ngrokOk)  { Write-Host "   ngrok door     : WORKING" -ForegroundColor Green }
 elseif ($publicHost) { Write-Host "   ngrok door     : down"  -ForegroundColor Yellow }
 
+# One door being healthy does not make the other door's fault invisible.
+Emit $funnelReason "DarkYellow"
+Emit $ngrokReason  "DarkYellow"
+
 Write-Host ""
-Write-Host "   ChatGPT can connect. Paste the matching URL as its connector:"
+Write-Host "   ChatGPT can connect through the door(s) marked WORKING."
+Write-Host "   Paste the matching URL as its connector:"
 Write-Host ""
 python -m harness url
-
-if ($publicHost -and (-not $ngrokOk) -and (Get-Process ngrok -ErrorAction SilentlyContinue)) {
-    Write-Host ""
-    Write-Host "   NOTE: the ngrok agent IS running but the probe failed. Check"      -ForegroundColor DarkGray
-    Write-Host "   ngrok's own counter at http://127.0.0.1:4040/api/tunnels - if it"  -ForegroundColor DarkGray
-    Write-Host "   does not increment, your request never reached ngrok at all and"   -ForegroundColor DarkGray
-    Write-Host "   the tunnel is not at fault. Broken local IPv6 does exactly this."  -ForegroundColor DarkGray
-    Write-Host "   It does NOT affect ChatGPT, whose traffic runs OpenAI -> ngrok"    -ForegroundColor DarkGray
-    Write-Host "   edge and never crosses your Wi-Fi."                                -ForegroundColor DarkGray
-}
 Write-Host ""
 exit 0
